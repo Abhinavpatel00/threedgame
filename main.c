@@ -39,7 +39,7 @@ static const VoxelType terrain_voxels[] = {
 };
 #define DMON_IMPL
 #include "external/dmon/dmon.h"
-static bool voxel_debug     = false;
+static bool voxel_debug     = true;
 static bool take_screenshot = true;
 typedef struct
 {
