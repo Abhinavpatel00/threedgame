@@ -1,4 +1,3 @@
-
 #include "external/cglm/include/cglm/types.h"
 #include "external/debugbreak/debugbreak.h"
 #include "tinytypes.h"
@@ -908,15 +907,15 @@ int main()
             beam.color_attachment_count = 1;
             beam.color_formats          = &renderer.hdr_color[0].format;
             beam.depth_format           = renderer.depth[1].format;
-            beam.blends[0]              = (ColorAttachmentBlend){
-                             .blend_enable = true,
-                             .src_color    = VK_BLEND_FACTOR_SRC_ALPHA,
-                             .dst_color    = VK_BLEND_FACTOR_ONE,
-                             .color_op     = VK_BLEND_OP_ADD,
-                             .src_alpha    = VK_BLEND_FACTOR_ONE,
-                             .dst_alpha    = VK_BLEND_FACTOR_ONE,
-                             .alpha_op     = VK_BLEND_OP_ADD,
-            };
+            beam.blends[0]              = (ColorAttachmentBlend){.blend_enable = true,
+                                                                 .src_color    = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                 .dst_color    = VK_BLEND_FACTOR_ONE,
+                                                                 .color_op     = VK_BLEND_OP_ADD,
+                                                                 .src_alpha    = VK_BLEND_FACTOR_ONE,
+                                                                 .dst_alpha    = VK_BLEND_FACTOR_ONE,
+                                                                 .alpha_op     = VK_BLEND_OP_ADD,
+                                                                 .write_mask   = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                                                               | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
 
             pipelines.beam = create_graphics_pipeline_cache(&renderer, &beam);
 
@@ -957,7 +956,7 @@ int main()
     VkDeviceAddress beam_addr  = base_addr + light_beam.offset;
 
 
-    u32 beam_count = 12;
+    u32 beam_count = 64;
     {
         const float beam_width  = 1.75f;
         const float beam_height = 14.0f;
@@ -1096,9 +1095,7 @@ int main()
     PUSH_CONSTANT(BlendPush, uint32_t color_tex; uint32_t weight_tex; uint32_t sampler_id; uint32_t pad;);
 
     PUSH_CONSTANT(WeightPush, uint32_t edge_tex; uint32_t area_tex; uint32_t search_tex; uint32_t sampler_id;);
-    PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr;
-
-                  mat4 view_proj; uint texture_id; uint sampler_id;
+    PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr; uint64_t pad; mat4 view_proj; uint texture_id; uint sampler_id;
 
     );
 

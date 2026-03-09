@@ -8,7 +8,9 @@ struct LightBeam
 struct Push
 {
   uint64_t beam_ptr;
-  float4x4 view_proj;
+ 
+  uint64_t pad;
+ float4x4 view_proj;
 };
 
 [[vk::push_constant]]
@@ -28,11 +30,6 @@ struct VSOutput
 // quad generated in shader
 static const float2 quad[6] = { float2(-1, -1), float2(1, -1), float2(1, 1),
                                 float2(-1, -1), float2(1, 1),  float2(-1, 1) };
-
-
-// --------------------
-// Vertex Shader
-// --------------------
 [shader("vertex")]
 VSOutput vs_main(uint vertexID: SV_VertexID, uint instanceID: SV_InstanceID)
 {
@@ -43,30 +40,30 @@ VSOutput vs_main(uint vertexID: SV_VertexID, uint instanceID: SV_InstanceID)
 
   float2 q = quad[vertexID];
 
-  float3 beam_pos = beam.pos_width.xyz;
-  float  beam_w   = beam.pos_width.w;
+  float3 pos   = beam.pos_width.xyz;
+  float  width = beam.pos_width.w;
 
-  float3 sun      = normalize(beam.sun_height.xyz);
-  float  beam_h   = beam.sun_height.w;
+  float3 sun    = normalize(beam.sun_height.xyz);
+  float  height = beam.sun_height.w;
 
-  float  opacity  = beam.misc.x;
+  // extract camera right vector from view-projection
+  float3 camRight = normalize(float3(push.view_proj[0][0], push.view_proj[1][0], push.view_proj[2][0]));
 
-  // avoid cross-product degeneracy
-  float3 upAxis = abs(sun.y) > 0.9 ? float3(1, 0, 0) : float3(0, 1, 0);
+  // beam vertical axis follows sunlight
+  float3 up = sun;
 
-  float3 right = normalize(cross(sun, upAxis));
-  float3 up    = normalize(cross(right, sun));
-
-  float3 worldPos = beam_pos + right * q.x * beam_w + up * q.y * beam_h;
+  // construct billboard plane
+  float3 worldPos = pos + camRight * q.x * width + up * q.y * height;
 
   o.pos = mul(push.view_proj, float4(worldPos, 1));
 
   o.uv      = q * 0.5 + 0.5;
-  o.opacity = opacity;
+  o.opacity = beam.misc.x;
 
   return o;
 }
 
+// --------------------
 
 // --------------------
 // Fragment Shader
@@ -75,12 +72,17 @@ VSOutput vs_main(uint vertexID: SV_VertexID, uint instanceID: SV_InstanceID)
 float4 fs_main(VSOutput input)
     : SV_Target0
 {
-  float3 beamColor = float3(1.0, 0.9, 0.65);
 
-  float gradient = 1.0 - input.uv.y;
-  float center   = 1.0 - abs(input.uv.x * 2.0 - 1.0);
-
-  float alpha = gradient * center * input.opacity;
-
-  return float4(beamColor, alpha);
+  // distance from beam center
+  float x = abs(input.uv.x * 2.0 - 1.0);
+  float  core      = exp(-x * x * 8.0);
+  float  halo      = 1.0 - smoothstep(0.0, 1.0, x);
+  float  vertical  = pow(saturate(input.uv.y), 0.5);
+  float  alpha     = (core * 0.8 + halo * 0.2) * vertical * input.opacity;
+  float3 warmGold  = float3(1.0, 0.85, 0.45);
+  float3 whiteCore = float3(1.0, 0.97, 0.88);
+  float3 color     = lerp(warmGold, whiteCore, core);
+  return float4(color, alpha);
 }
+
+
