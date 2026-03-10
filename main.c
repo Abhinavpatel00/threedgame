@@ -934,6 +934,10 @@ int main()
             //
             // Additive blending works better for light than standard alpha blending because light adds energy instead of blocking it.
         }
+
+
+        {
+        }
     }
 
     BufferPool pool = {0};
@@ -951,6 +955,14 @@ int main()
     VkDrawIndirectCommand* cpu_indirect = (VkDrawIndirectCommand*)indirect_slice.mapped;
     uint32_t*              cpu_count    = (uint32_t*)count_slice.mapped;
 
+    // describe ONE draw call
+    cpu_indirect[0].vertexCount   = 3;
+    cpu_indirect[0].instanceCount = 1;
+    cpu_indirect[0].firstVertex   = 0;
+    cpu_indirect[0].firstInstance = 0;
+
+    // number of draws
+    *cpu_count = 1;
 #define MAX_LIGHT_BEAM 64
     BufferSlice     light_beam = buffer_pool_alloc(&pool, MAX_LIGHT_BEAM * sizeof(LightBeam), 16);
     LightBeam*      cpu_beams  = (LightBeam*)light_beam.mapped;
@@ -975,67 +987,6 @@ int main()
             };
         }
     }
-    vmaFlushAllocation(renderer.vmaallocator, pool.allocation, light_beam.offset, MAX_LIGHT_BEAM * sizeof(LightBeam));
-
-
-    static Chunk scratch_chunk = {0};
-
-    ChunkMesh mesh;
-    mesh.faces      = malloc(sizeof(PackedFace) * MAX_STREAM_FACES);
-    mesh.capacity   = MAX_STREAM_FACES;
-    mesh.face_count = 0;
-
-    StreamBuildState stream_build = {
-        .active = false,
-        .mesh =
-            {
-                .faces      = malloc(sizeof(PackedFace) * MAX_STREAM_FACES),
-                .capacity   = MAX_STREAM_FACES,
-                .face_count = 0,
-            },
-    };
-
-    int world_chunk_x = 0;
-    int world_chunk_z = 0;
-
-    if(voxel_debug)
-    {
-        build_debug_voxel_palette(&scratch_chunk);
-        append_chunk_mesh(&renderer, &scratch_chunk, &mesh, 0, 0);
-    }
-    else
-    {
-        stream_build_begin(&stream_build, world_chunk_x, world_chunk_z);
-    }
-
-    printf("voxel debug: face_count=%u\n", mesh.face_count);
-    for(uint32_t i = 0; i < mesh.face_count && i < 4; i++)
-    {
-        uint32_t data0 = mesh.faces[i].data0;
-        uint32_t x     = data0 & 255u;
-        uint32_t y     = (data0 >> 8) & 255u;
-        uint32_t z     = (data0 >> 16) & 4095u;
-        uint32_t face  = (data0 >> 28) & 7u;
-        printf("face[%u]: xyz=(%u,%u,%u) face=%u tex_id=%u\n", i, x, y, z, face, mesh.faces[i].data1);
-    }
-
-    BufferSlice face_slice = buffer_pool_alloc(&pool, sizeof(PackedFace) * MAX_STREAM_FACES, 16);
-
-    PackedFace* cpu_faces = (PackedFace*)face_slice.mapped;
-    memcpy(cpu_faces, mesh.faces, sizeof(PackedFace) * mesh.face_count);
-
-    vmaFlushAllocation(renderer.vmaallocator, pool.allocation, face_slice.offset, sizeof(PackedFace) * mesh.face_count);
-
-    VkDeviceAddress face_ptr      = vkGetBufferDeviceAddress(renderer.device, &addrInfo) + face_slice.offset;
-    cpu_indirect[0].vertexCount   = mesh.face_count * 6;
-    cpu_indirect[0].instanceCount = 1;
-    cpu_indirect[0].firstVertex   = 0;
-    cpu_indirect[0].firstInstance = 0;
-
-    *cpu_count = 1;
-
-
-    /* indirect draw command */
 
     /* device address */
 
@@ -1071,10 +1022,10 @@ int main()
     PUSH_CONSTANT(Push, VkDeviceAddress face_ptr;  //8
                   uint  face_count;                //5
                   float aspect;                    //4
-                  vec3 cam_pos;  // camera world position
-                  uint pad1;     // alignment
-                  vec3 cam_dir;  // camera forward (normalized)
-                  uint pad2;
+                  vec3  cam_pos;                   // camera world position
+                  uint  pad1;                      // alignment
+                  vec3  cam_dir;                   // camera forward (normalized)
+                  uint  pad2;
 
                   float view_proj[4][4]; uint texture_id; uint sampler_id;
 
@@ -1124,42 +1075,9 @@ int main()
         frame_start(&renderer, &cam);
         TracyCZoneEnd(frame_start_zone);
 
-        TracyCZoneN(streaming_zone, "World Streaming Update", 1);
+        TracyCZoneN(streaming_zone, "Frame Loop", 1);
         if(!voxel_debug)
         {
-            int new_world_chunk_x = world_to_chunk_coord(cam.position[0]);
-            int new_world_chunk_z = world_to_chunk_coord(cam.position[2]);
-
-            if(new_world_chunk_x != 0 || new_world_chunk_z != 0)
-            {
-                world_chunk_x += new_world_chunk_x;
-                world_chunk_z += new_world_chunk_z;
-
-                cam.position[0] -= (float)(new_world_chunk_x * CHUNK_SIZE);
-                cam.position[2] -= (float)(new_world_chunk_z * CHUNK_SIZE);
-
-                stream_build_begin(&stream_build, world_chunk_x, world_chunk_z);
-                printf("streaming queued center=(%d,%d)\n", world_chunk_x, world_chunk_z);
-            }
-
-            if(stream_build.active)
-            {
-                if(stream_build_step(&renderer, &stream_build, &scratch_chunk, 2))
-                {
-                    PackedFace* old_faces        = mesh.faces;
-                    mesh.faces                   = stream_build.mesh.faces;
-                    stream_build.mesh.faces      = old_faces;
-                    mesh.face_count              = stream_build.mesh.face_count;
-                    stream_build.mesh.face_count = 0;
-
-                    memcpy(cpu_faces, mesh.faces, sizeof(PackedFace) * mesh.face_count);
-                    vmaFlushAllocation(renderer.vmaallocator, pool.allocation, face_slice.offset, sizeof(PackedFace) * mesh.face_count);
-
-                    cpu_indirect[0].vertexCount = mesh.face_count * 6;
-
-                    printf("streamed chunks center=(%d,%d) faces=%u\n", world_chunk_x, world_chunk_z, mesh.face_count);
-                }
-            }
         }
         TracyCZoneEnd(streaming_zone);
 
@@ -1261,47 +1179,21 @@ int main()
         }
         TracyCZoneEnd(imgui_zone);
         gpu_profiler_begin_frame(frame_prof, cmd);
-        printf("PUSH CONSTANT CALLED\n");
         {
             vkCmdBeginRendering(cmd, &rendering);
-            printf("matrix:\n");
-            printf("view_proj matrix:\n");
-
-            for(int r = 0; r < 4; r++)
-            {
-                printf("%f %f %f %f\n", cam.view_proj[r][0], cam.view_proj[r][1], cam.view_proj[r][2], cam.view_proj[r][3]);
-            }
-            printf("sizeof(Push) = %zu\n", sizeof(Push));
-
-            printf("offset cam_dir   = %zu\n", offsetof(Push, cam_dir));
-            printf("offset cam_pos   = %zu\n", offsetof(Push, cam_pos));
-
-            
-            printf("offset view_proj = %zu\n", offsetof(Push, view_proj));
-            
-
-            printf("offset view_proj = %zu\n", offsetof(Push, texture_id));
-	    printf("offset view_proj cam = %zu\n", offsetof(Camera, view_proj));
-
-            printf("offset view_proj cam = %zu\n", offsetof(Camera, mouse_captured));
-
-	    GPU_SCOPE(frame_prof, cmd, "Main Pass", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
+            GPU_SCOPE(frame_prof, cmd, "Main Pass", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
             {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipelines.pipelines[pipelines.triangle]);
                 vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
 
-                printf("sizeof(Push) = %zu\n", sizeof(Push));
                 Push push = {0};
 
                 push.aspect     = (float)renderer.swapchain.extent.width / (float)renderer.swapchain.extent.height;
-                push.face_ptr   = face_ptr;
-                push.face_count = mesh.face_count;
                 push.texture_id = tex_id;
                 push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
 
-            printf("push = %u\n", push.texture_id);
-            
-	    glm_vec3_copy(cam.cam_dir, push.cam_dir);
+
+                glm_vec3_copy(cam.cam_dir, push.cam_dir);
                 glm_vec3_copy(cam.position, push.cam_pos);
                 glm_mat4_copy(cam.view_proj, push.view_proj);  // this one was already correct
 
