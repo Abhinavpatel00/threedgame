@@ -58,7 +58,7 @@ VSOutput vs_main(uint vertexID: SV_VertexID, uint instanceID: SV_InstanceID)
   o.pos = mul(push.view_proj, float4(worldPos, 1));
 
   o.uv      = q * 0.5 + 0.5;
-  o.opacity = beam.misc.x;
+  o.opacity = beam.misc.x*0.2;
 
   return o;
 }
@@ -76,7 +76,10 @@ float4 fs_main(VSOutput input)
   // distance from beam center
   float x = abs(input.uv.x * 2.0 - 1.0);
   float  core      = exp(-x * x * 8.0);
-  float  halo      = 1.0 - smoothstep(0.0, 1.0, x);
+float noise = frac(sin(dot(input.uv*20,float2(12.9898,78.233))) * 43758.5453);
+core *= lerp(0.8,1.2,noise);
+
+float  halo      = 1.0 - smoothstep(0.0, 1.0, x);
   float  vertical  = pow(saturate(input.uv.y), 0.5);
   float  alpha     = (core * 0.8 + halo * 0.2) * vertical * input.opacity;
   float3 warmGold  = float3(1.0, 0.85, 0.45);

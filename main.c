@@ -19,10 +19,12 @@
 #include "voxel.h"
 #define DMON_IMPL
 #include "external/dmon/dmon.h"
+#include "external/tracy/public/tracy/TracyC.h"
+
 static bool voxel_debug = true;
 
 static bool take_screenshot = true;
-#define VALIDATION true
+#define VALIDATION false
 #define KB(x) ((x) * 1024ULL)
 #define MB(x) ((x) * 1024ULL * 1024ULL)
 #define GB(x) ((x) * 1024ULL * 1024ULL * 1024ULL)
@@ -1100,12 +1102,16 @@ int main()
     );
 
 
-    dmon_init();
-    dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
+  //  dmon_init();
+//    dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
 
     uint32_t pp_frame_counter = 0;
     while(!glfwWindowShouldClose(renderer.window))
     {
+        TracyCFrameMark;
+        TracyCZoneN(frame_loop_zone, "Frame Loop", 1);
+
+        TracyCZoneN(hot_reload_zone, "Hot Reload + Pipeline Rebuild", 1);
         if(shader_changed)
         {
             shader_changed = false;
@@ -1115,9 +1121,13 @@ int main()
             mark_pipelines_dirty(changed_shader);
         }
         rebuild_dirty_pipelines(&renderer);
+        TracyCZoneEnd(hot_reload_zone);
 
+        TracyCZoneN(frame_start_zone, "frame_start", 1);
         frame_start(&renderer, &cam);
+        TracyCZoneEnd(frame_start_zone);
 
+        TracyCZoneN(streaming_zone, "World Streaming Update", 1);
         if(!voxel_debug)
         {
             int new_world_chunk_x = world_to_chunk_coord(cam.position[0]);
@@ -1154,11 +1164,13 @@ int main()
                 }
             }
         }
+        TracyCZoneEnd(streaming_zone);
 
         VkCommandBuffer cmd        = renderer.frames[renderer.current_frame].cmdbuf;
         GpuProfiler*    frame_prof = &renderer.gpuprofiler[renderer.current_frame];
 
         uint32_t current_image = renderer.swapchain.current_image;
+        TracyCZoneN(record_cmd_zone, "Record Command Buffer", 1);
         vk_cmd_begin(cmd, false);
         {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.bindless_system.pipeline_layout, 0,
@@ -1201,6 +1213,7 @@ int main()
         };
 
 
+        TracyCZoneN(imgui_zone, "ImGui CPU", 1);
         {
             imgui_begin_frame();
 
@@ -1249,6 +1262,7 @@ int main()
             igEnd();
             igRender();
         }
+        TracyCZoneEnd(imgui_zone);
         gpu_profiler_begin_frame(frame_prof, cmd);
 
         {
@@ -1278,22 +1292,22 @@ int main()
             }
 
             //
-            {
-                Lightbeampush push = {0};
-                push.beam_ptr      = beam_addr;
-                glm_mat4_copy(cam.view_proj, push.view_proj);
-
-                vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0,
-                                   sizeof(Lightbeampush), &push);
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipelines.pipelines[pipelines.beam]);
-                //6 vertices × beam_count instances
-                vkCmdDraw(cmd,
-                          6,           // vertices per quad
-                          beam_count,  // instances
-                          0, 0);
-            }
-
+            // {
+            //     Lightbeampush push = {0};
+            //     push.beam_ptr      = beam_addr;
+            //     glm_mat4_copy(cam.view_proj, push.view_proj);
             //
+            //     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0,
+            //                        sizeof(Lightbeampush), &push);
+            //     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipelines.pipelines[pipelines.beam]);
+            //     //6 vertices × beam_count instances
+            //     vkCmdDraw(cmd,
+            //               6,           // vertices per quad
+            //               beam_count,  // instances
+            //               0, 0);
+            // }
+            //
+            // //
             vkCmdEndRendering(cmd);
         }
 
@@ -1483,14 +1497,21 @@ int main()
 
 
         vk_cmd_end(renderer.frames[renderer.current_frame].cmdbuf);
+        TracyCZoneEnd(record_cmd_zone);
 
 
+        TracyCZoneN(submit_zone, "Submit + Present", 1);
         submit_frame(&renderer);
+        TracyCZoneEnd(submit_zone);
 
         if(take_screenshot)
         {
             renderer_save_screenshot(&renderer);
         }
+
+        TracyCZoneEnd(frame_loop_zone);
+
+
     }
 
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "external/cglm/include/cglm/vec3.h"
+#include "external/tracy/public/tracy/TracyC.h"
 #include <bits/time.h>
 #include <time.h>
 #define IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE (1)
@@ -68,10 +69,30 @@ typedef struct VkPhysicalDeviceShaderNonSemanticInfoFeaturesKHR
 #define MAX_BINDLESS_MATERIALS 65536
 #define MAX_BINDLESS_TRANSFORMS 65536
 
+typedef struct
+{
+    VkImage       image;
+    VkImageView   view;
+    VmaAllocation allocation;
 
-extern flow_id_pool pipeline_id_pool;
-typedef uint32_t    PipelineID;
-typedef uint32_t    TextureID;
+    // metadata
+    uint32_t width;
+    uint32_t height;
+    uint32_t mip_count;
+
+    VkFormat format;
+
+    bool valid;
+} Texture;
+
+
+extern flow_id_pool    pipeline_id_pool;
+typedef uint32_t       PipelineID;
+typedef uint32_t       TextureID;
+extern flow_id_pool    texture_pool;
+extern flow_id_pool    sampler_pool;
+extern Texture         textures[MAX_BINDLESS_TEXTURES];  // reference by textureid
+extern VkSampler       samplers[MAX_BINDLESS_SAMPLERS];  // reference by samplerid
 
 
 typedef struct
@@ -343,23 +364,6 @@ typedef struct Frustum
 // • pixel-art texture → nearest filtering
 // • shadow map → comparison sampler
 typedef struct
-{
-    VkImage       image;
-    VkImageView   view;
-    VmaAllocation allocation;
-
-    // metadata
-    uint32_t width;
-    uint32_t height;
-    uint32_t mip_count;
-
-    VkFormat format;
-
-    bool valid;
-} Texture;
-
-
-typedef struct
 
 
 {
@@ -416,14 +420,11 @@ typedef struct
     DeviceInfo info;
 
     VkPipelineCache     pipeline_cache;
-    flow_id_pool        texture_pool;
-    flow_id_pool        sampler_pool;
     DefaultSamplerTable default_samplers;
-    Texture             textures[MAX_BINDLESS_TEXTURES];  // reference by textureid
-    VkSampler           samplers[MAX_BINDLESS_SAMPLERS];  // reference by samplerid
-    TextureID           dummy_texture;
-    TextureID           smaa_area_tex;
-    TextureID           smaa_search_tex;
+
+    TextureID dummy_texture;
+    TextureID smaa_area_tex;
+    TextureID smaa_search_tex;
 
 } Renderer;
 
@@ -893,7 +894,7 @@ static inline uint64_t time_now_ns()
 
 static FLOW_INLINE void frame_start(Renderer* renderer, Camera* cam)
 {
-
+    TracyCZoneNC(ctx, "frame_start", 0x00FF00, 1);
     renderer->current_frame = (renderer->current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     uint64_t now            = time_now_ns();
 
@@ -988,7 +989,7 @@ static FLOW_INLINE void frame_start(Renderer* renderer, Camera* cam)
         -cosf(cam->pitch) * cosf(cam->yaw),
     };
     glm_vec3_normalize(forward);
-glm_vec3_copy(forward, cam->cam_dir);
+    glm_vec3_copy(forward, cam->cam_dir);
 
     vec3 world_up = {0, 1, 0};
     vec3 right = {0}, up = {0};
@@ -1135,11 +1136,14 @@ glm_vec3_copy(forward, cam->cam_dir);
     vk_swapchain_acquire(renderer->device, &renderer->swapchain,
                          renderer->frames[renderer->current_frame].image_available_semaphore, VK_NULL_HANDLE, UINT64_MAX);
     renderer->cpu_wait_accum_ns += (double)(time_now_ns() - wait_start);
+
+    TracyCZoneEnd(ctx);
 }
 
 
 static FLOW_INLINE void submit_frame(Renderer* r)
 {
+    TracyCZoneNC(ctx, "submit_frame", 0xFF0000, 1);
     FrameContext* f   = &r->frames[r->current_frame];
     uint32_t      img = r->swapchain.current_image;
 
@@ -1166,6 +1170,8 @@ static FLOW_INLINE void submit_frame(Renderer* r)
     uint64_t wait_start = time_now_ns();
     vk_swapchain_present(r->present_queue, &r->swapchain, &r->swapchain.render_finished[r->swapchain.current_image], 1);
     r->cpu_wait_accum_ns += (double)(time_now_ns() - wait_start);
+
+    TracyCZoneEnd(ctx);
 }
 
 
@@ -1181,17 +1187,17 @@ FORCE_INLINE bool sampler_create(Renderer* r, const VkSamplerCreateInfo* ci, uin
         return false;
 
     uint32_t id;
-    if(!flow_id_pool_create_id(&r->sampler_pool, &id))
+    if(!flow_id_pool_create_id(&sampler_pool, &id))
     {
         vkDestroySampler(r->device, sampler, NULL);
         return false;
     }
 
-    r->samplers[id] = sampler;
+    samplers[id] = sampler;
 
     *out_sampler_id = id;
 
-    VkDescriptorImageInfo sampler_info = {.sampler = r->samplers[id]};
+    VkDescriptorImageInfo sampler_info = {.sampler = samplers[id]};
 
     VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 

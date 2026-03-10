@@ -11,6 +11,7 @@ CXX := clang++
 
 SRC_C := main.c ext.c vk.c helpers.c offset_allocator.c
 
+
 SRC_CPP := vma.cpp \
            $(wildcard external/meshoptimizer/src/*.cpp) \
            external/cimgui/cimgui.cpp \
@@ -21,8 +22,8 @@ SRC_CPP := vma.cpp \
            external/cimgui/imgui/imgui_tables.cpp \
            external/cimgui/imgui/imgui_widgets.cpp \
            external/cimgui/imgui/backends/imgui_impl_glfw.cpp \
-           external/cimgui/imgui/backends/imgui_impl_vulkan.cpp
-
+           external/cimgui/imgui/backends/imgui_impl_vulkan.cpp \
+           external/tracy/public/TracyClient.cpp
 OBJ := $(addprefix $(BUILD_DIR)/, $(SRC_C:.c=.o) $(SRC_CPP:.cpp=.o))
 
 # -----------------------------
@@ -46,7 +47,7 @@ BASE_CXXFLAGS := -std=c++17 -w -fno-common $(INCLUDES) \
 # Debug Flags
 # -----------------------------
 
-DEBUG_FLAGS := -O0 -g -ggdb -fno-omit-frame-pointer  -DDEBUG 
+DEBUG_FLAGS := -O0 -g -ggdb -fno-omit-frame-pointer  -DDEBUG      -DTRACY_ENABLE 
 
 # -----------------------------
 # Aggressive Release Flags

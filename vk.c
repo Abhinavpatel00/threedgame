@@ -13,8 +13,30 @@
 #include "external/debugbreak/debugbreak.h"
 #include "external/smaa/Textures/AreaTex.h"
 #include "external/smaa/Textures/SearchTex.h"
+// Forward declarations are only useful for pointers:
+//
+// typedef struct Texture Texture;
+//
+// Texture* create_texture();
+//
+// Because pointer size is known.
+//
+// But arrays need full struct size, so forward declarations don't work.
+
+
+
+
 
 flow_id_pool pipeline_id_pool = {0};
+flow_id_pool    texture_pool;
+flow_id_pool    sampler_pool;
+Texture         textures[MAX_BINDLESS_TEXTURES];  // reference by textureid
+VkSampler       samplers[MAX_BINDLESS_SAMPLERS];  // reference by samplerid
+
+
+
+
+
 
 bool is_instance_extension_supported(const char* extension_name)
 {
@@ -808,7 +830,7 @@ void imgui_init(GLFWwindow*       window,
 
 void renderer_create(Renderer* r, RendererDesc* desc)
 {
-
+    TracyCZoneN(ctx, "renderer_create", 1);
     // Instance
     // Debug messenger
     // Physical device
@@ -1144,9 +1166,9 @@ void renderer_create(Renderer* r, RendererDesc* desc)
     log_info("[renderer] initialization complete");
 
 
-    flow_id_pool_init(&r->texture_pool, MAX_BINDLESS_TEXTURES);
+    flow_id_pool_init(&texture_pool, MAX_BINDLESS_TEXTURES);
 
-    flow_id_pool_init(&r->sampler_pool, MAX_BINDLESS_SAMPLERS);
+    flow_id_pool_init(&sampler_pool, MAX_BINDLESS_SAMPLERS);
 
     flow_id_pool_init(&pipeline_id_pool , MAX_PIPELINES);
     vk_cmd_create_pool(r->device, r->graphics_queue_index, true, false, &r->one_time_gfx_pool);
@@ -1412,7 +1434,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                   .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
         TextureID id  = create_texture(r, &desc);
-        Texture*  tex = &r->textures[id];
+        Texture*  tex = &textures[id];
 
         VkDeviceSize size = AREATEX_SIZE;
 
@@ -1469,7 +1491,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                       .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
             smaa_area    = create_texture(r, &desc);
-            Texture* tex = &r->textures[smaa_area];
+            Texture* tex = &textures[smaa_area];
 
             VkDeviceSize size = AREATEX_SIZE;
 
@@ -1520,7 +1542,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                       .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
             smaa_search  = create_texture(r, &desc);
-            Texture* tex = &r->textures[smaa_search];
+            Texture* tex = &textures[smaa_search];
 
             VkDeviceSize size = SEARCHTEX_SIZE;
 
@@ -1591,7 +1613,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                         .format    = VK_FORMAT_R8G8B8A8_UNORM,
                                         .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT};
         TextureID         id         = create_texture(r, &desc);
-        Texture*          tex        = &r->textures[id];
+        Texture*          tex        = &textures[id];
         VkDeviceSize      image_size = w * h * 4;
         Buffer            staging;
         create_buffer(r, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, &staging);
@@ -1955,7 +1977,7 @@ void vk_create_swapchain(VkDevice                       device,
         out_swapchain->states[i] =
             (ImageState){.layout = VK_IMAGE_LAYOUT_UNDEFINED, .stage = VK_PIPELINE_STAGE_2_NONE, .access = 0, .validity = IMAGE_STATE_UNDEFINED};
 
-        flow_id_pool_create_id(&r->texture_pool, &out_swapchain->bindless_index[i]);
+        flow_id_pool_create_id(&texture_pool, &out_swapchain->bindless_index[i]);
 
         if(info->extra_usage & VK_IMAGE_USAGE_SAMPLED_BIT)
         {
@@ -2291,6 +2313,8 @@ static VkShaderModule create_shader_module(VkDevice device, const void* code, si
 
 VkPipeline create_graphics_pipeline(Renderer* renderer, const GraphicsPipelineConfig* cfg)
 {
+    
+    
     void*  vs_code = NULL;
     size_t vs_size = 0;
 
@@ -2795,13 +2819,13 @@ TextureID create_texture(Renderer* r, const TextureCreateDesc* desc)
 {
     TextureID id;
 
-    if(!flow_id_pool_create_id(&r->texture_pool, &id))
+    if(!flow_id_pool_create_id(&texture_pool, &id))
     {
         fprintf(stderr, "Texture pool exhausted\n");
         return UINT32_MAX;
     }
 
-    Texture* tex = &r->textures[id];
+    Texture* tex = &textures[id];
 
     tex->width     = desc->width;
     tex->height    = desc->height;
@@ -2994,7 +3018,7 @@ TextureID load_texture(Renderer* r, const char* path)
                                   .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
         TextureID id  = create_texture(r, &desc);
-        Texture*  tex = &r->textures[id];
+        Texture*  tex = &textures[id];
 
         VkCommandBuffer cmd = vk_begin_one_time_cmd(r->device, r->one_time_gfx_pool);
 
@@ -3064,7 +3088,7 @@ TextureID load_texture(Renderer* r, const char* path)
                               .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
     TextureID id  = create_texture(r, &desc);
-    Texture*  tex = &r->textures[id];
+    Texture*  tex = &textures[id];
 
     VkDeviceSize image_size = w * h * 4;
 
@@ -3115,7 +3139,7 @@ SamplerID create_sampler(Renderer* r, const SamplerCreateDesc* desc)
 {
     SamplerID id;
 
-    if(!flow_id_pool_create_id(&r->sampler_pool, &id))
+    if(!flow_id_pool_create_id(&sampler_pool, &id))
     {
         fprintf(stderr, "Sampler pool exhausted\n");
         return UINT32_MAX;
@@ -3135,9 +3159,9 @@ SamplerID create_sampler(Renderer* r, const SamplerCreateDesc* desc)
                                 .minLod = 0.0f,
                                 .maxLod = desc->max_lod};
 
-    VK_CHECK(vkCreateSampler(r->device, &info, r->allocatorcallbacks, &r->samplers[id]));
+    VK_CHECK(vkCreateSampler(r->device, &info, r->allocatorcallbacks, &samplers[id]));
 
-    VkDescriptorImageInfo sampler_info = {.sampler = r->samplers[id]};
+    VkDescriptorImageInfo sampler_info = {.sampler = samplers[id]};
 
     VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 
@@ -3156,16 +3180,16 @@ SamplerID create_sampler(Renderer* r, const SamplerCreateDesc* desc)
 
 void destroy_sampler(Renderer* r, SamplerID id)
 {
-    VkSampler sampler = r->samplers[id];
+    VkSampler sampler = samplers[id];
 
     if(!sampler)
         return;
 
     vkDestroySampler(r->device, sampler, r->allocatorcallbacks);
 
-    r->samplers[id] = VK_NULL_HANDLE;
+    samplers[id] = VK_NULL_HANDLE;
 
-    flow_id_pool_destroy_id(&r->sampler_pool, id);
+    flow_id_pool_destroy_id(&sampler_pool, id);
 }
 
 
@@ -3198,9 +3222,8 @@ internal uint32_t rt_compute_mip_count(uint32_t w, uint32_t h)
 
 
 bool rt_create(Renderer* r, RenderTarget* rt, const RenderTargetSpec* spec)
-
-
 {
+ 
     if(!r || !rt || !spec || spec->width == 0 || spec->height == 0)
         return false;
 
@@ -3309,7 +3332,7 @@ bool rt_create(Renderer* r, RenderTarget* rt, const RenderTargetSpec* spec)
 
     uint32_t id;
 
-    if(!flow_id_pool_create_id(&r->texture_pool, &id))
+    if(!flow_id_pool_create_id(&texture_pool, &id))
     {
         fprintf(stderr, "Texture pool exhausted\n");
         return UINT32_MAX;
@@ -3367,7 +3390,7 @@ void rt_destroy(Renderer* r, RenderTarget* rt)
         // Clear sampled descriptor if used
         if(rt->usage & VK_IMAGE_USAGE_SAMPLED_BIT)
         {
-            VkDescriptorImageInfo img = {.imageView = r->textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+            VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
 
             VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                           .dstSet          = r->bindless_system.set,
@@ -3383,7 +3406,7 @@ void rt_destroy(Renderer* r, RenderTarget* rt)
         // Clear storage descriptor if used
         if(rt->usage & VK_IMAGE_USAGE_STORAGE_BIT)
         {
-            VkDescriptorImageInfo img = {.imageView = r->textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+            VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
 
             VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                           .dstSet          = r->bindless_system.set,
@@ -3396,7 +3419,7 @@ void rt_destroy(Renderer* r, RenderTarget* rt)
             vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
         }
 
-        flow_id_pool_destroy_id(&r->texture_pool, id);
+        flow_id_pool_destroy_id(&texture_pool, id);
     }
 
     if(rt->view)
