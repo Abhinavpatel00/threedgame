@@ -59,7 +59,8 @@ RELEASE_FLAGS := -O3 -march=native -mtune=native \
                  -fno-trapping-math \
                  -fstrict-aliasing \
                  -fno-semantic-interposition \
-                 -DNDEBUG
+                 -DNDEBUG  -DTRACY_ENABLE 
+
 
 # -----------------------------
 # Libraries

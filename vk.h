@@ -1,5 +1,4 @@
 #pragma once
-#include "external/cglm/include/cglm/vec3.h"
 #include "external/tracy/public/tracy/TracyC.h"
 #include <bits/time.h>
 #include <time.h>
@@ -9,6 +8,7 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #define CIMGUI_USE_VULKAN
 #define CGLM_ALL_UNALIGNED
+#include "external/cglm/include/cglm/vec3.h"
 #include "external/cglm/include/cglm/cglm.h"
 #include "external/cglm/include/cglm/types.h"
 #include "stb/stb_image_write.h"

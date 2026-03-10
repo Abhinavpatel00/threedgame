@@ -1,4 +1,3 @@
-#include "external/cglm/include/cglm/types.h"
 #include "external/debugbreak/debugbreak.h"
 #include "tinytypes.h"
 #include "flow/flow.h"
@@ -24,7 +23,7 @@
 static bool voxel_debug = true;
 
 static bool take_screenshot = true;
-#define VALIDATION false
+#define VALIDATION true
 #define KB(x) ((x) * 1024ULL)
 #define MB(x) ((x) * 1024ULL * 1024ULL)
 #define GB(x) ((x) * 1024ULL * 1024ULL * 1024ULL)
@@ -1023,7 +1022,6 @@ int main()
     BufferSlice face_slice = buffer_pool_alloc(&pool, sizeof(PackedFace) * MAX_STREAM_FACES, 16);
 
     PackedFace* cpu_faces = (PackedFace*)face_slice.mapped;
-
     memcpy(cpu_faces, mesh.faces, sizeof(PackedFace) * mesh.face_count);
 
     vmaFlushAllocation(renderer.vmaallocator, pool.allocation, face_slice.offset, sizeof(PackedFace) * mesh.face_count);
@@ -1071,15 +1069,14 @@ int main()
          view_proj=32, texture_id=96, sampler_id=100 */
     // may be all push constant can be defined in one header that both gpu and cpu share
     PUSH_CONSTANT(Push, VkDeviceAddress face_ptr;  //8
-                  uint  face_count;                //4
+                  uint  face_count;                //5
                   float aspect;                    //4
-                  // Remove pad1/pad2/pad3, use them for camera data:
                   vec3 cam_pos;  // camera world position
                   uint pad1;     // alignment
                   vec3 cam_dir;  // camera forward (normalized)
                   uint pad2;
 
-                  mat4 view_proj; uint texture_id; uint sampler_id;
+                  float view_proj[4][4]; uint texture_id; uint sampler_id;
 
     );
 
@@ -1097,13 +1094,13 @@ int main()
     PUSH_CONSTANT(BlendPush, uint32_t color_tex; uint32_t weight_tex; uint32_t sampler_id; uint32_t pad;);
 
     PUSH_CONSTANT(WeightPush, uint32_t edge_tex; uint32_t area_tex; uint32_t search_tex; uint32_t sampler_id;);
-    PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr; uint64_t pad; mat4 view_proj; uint texture_id; uint sampler_id;
+    PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr; uint64_t pad; float view_proj[4][4]; uint texture_id; uint sampler_id;
 
     );
 
 
-  //  dmon_init();
-//    dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
+    //  dmon_init();
+    //    dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
 
     uint32_t pp_frame_counter = 0;
     while(!glfwWindowShouldClose(renderer.window))
@@ -1264,15 +1261,36 @@ int main()
         }
         TracyCZoneEnd(imgui_zone);
         gpu_profiler_begin_frame(frame_prof, cmd);
-
+        printf("PUSH CONSTANT CALLED\n");
         {
             vkCmdBeginRendering(cmd, &rendering);
+            printf("matrix:\n");
+            printf("view_proj matrix:\n");
 
-            GPU_SCOPE(frame_prof, cmd, "Main Pass", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
+            for(int r = 0; r < 4; r++)
+            {
+                printf("%f %f %f %f\n", cam.view_proj[r][0], cam.view_proj[r][1], cam.view_proj[r][2], cam.view_proj[r][3]);
+            }
+            printf("sizeof(Push) = %zu\n", sizeof(Push));
+
+            printf("offset cam_dir   = %zu\n", offsetof(Push, cam_dir));
+            printf("offset cam_pos   = %zu\n", offsetof(Push, cam_pos));
+
+            
+            printf("offset view_proj = %zu\n", offsetof(Push, view_proj));
+            
+
+            printf("offset view_proj = %zu\n", offsetof(Push, texture_id));
+	    printf("offset view_proj cam = %zu\n", offsetof(Camera, view_proj));
+
+            printf("offset view_proj cam = %zu\n", offsetof(Camera, mouse_captured));
+
+	    GPU_SCOPE(frame_prof, cmd, "Main Pass", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
             {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipelines.pipelines[pipelines.triangle]);
                 vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
 
+                printf("sizeof(Push) = %zu\n", sizeof(Push));
                 Push push = {0};
 
                 push.aspect     = (float)renderer.swapchain.extent.width / (float)renderer.swapchain.extent.height;
@@ -1281,7 +1299,9 @@ int main()
                 push.texture_id = tex_id;
                 push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
 
-                glm_vec3_copy(cam.cam_dir, push.cam_dir);
+            printf("push = %u\n", push.texture_id);
+            
+	    glm_vec3_copy(cam.cam_dir, push.cam_dir);
                 glm_vec3_copy(cam.position, push.cam_pos);
                 glm_mat4_copy(cam.view_proj, push.view_proj);  // this one was already correct
 
@@ -1510,12 +1530,10 @@ int main()
         }
 
         TracyCZoneEnd(frame_loop_zone);
-
-
     }
 
 
-    printf(" renderer size is %zu", sizeof(float));
+    printf(" renderer size is %zu", sizeof(Renderer));
     printf("Push size = %zu\n", alignof(Camera));
     printf("Push size = %zu\n", alignof(Push));
     printf("view_proj offset = %zu\n", offsetof(Push, view_proj));
