@@ -147,8 +147,9 @@ void cs_main(uint3 id: SV_DispatchThreadID)
   RWTexture2D<float4> dst = storage_images[push.output_image_id];
 
   float3 color = src.Load(int3(pix, 0)).rgb;
-  color = tonemapACES(color);
-  color = toSrgb(saturate(color));
+   color = filmic(color);
+   color = toLinear(saturate(color));
+  //
 
   dst[pix] = float4(color, 1.0);
 }

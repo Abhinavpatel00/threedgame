@@ -20,6 +20,7 @@
 #include "flow/flow.h"
 
 #include "tinytypes.h"
+#include "slangtypes.h"
 
 #include "external/cimgui/cimgui.h"
 #include "helpers.h"
@@ -385,6 +386,7 @@ typedef struct
     GpuProfiler gpuprofiler[MAX_FRAMES_IN_FLIGHT];
 
     Buffer           readback_buffer;
+    Buffer           global_ubo[MAX_FRAMES_IN_FLIGHT];
     InstanceContext  instance;
     VkPhysicalDevice physical_device;
     //warm data

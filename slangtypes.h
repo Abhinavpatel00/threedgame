@@ -24,9 +24,9 @@ typedef ivec2 int2;
 typedef ivec3 int3;
 typedef ivec4 int4;
 
-typedef uvec2 uint2;
-typedef uvec3 uint3;
-typedef uvec4 uint4;
+//typedef uvec2 uint2;
+//typedef uvec3 uint3;
+//typedef uvec4 uint4;
 
 /* ----- matrix types ----- */
 
@@ -46,6 +46,26 @@ static inline float lerp(float a, float b, float t)
 {
     return a + (b - a) * t;
 }
+
+/* =========================================================
+   Shared GPU/CPU structs
+   ========================================================= */
+
+typedef struct GlobalData
+{
+    float4x4 view;            // 64 bytes
+    float4x4 projection;      // 64 bytes
+    float4x4 viewproj;        // 64 bytes
+    float4x4 inv_view;        // 64 bytes
+    float4x4 inv_projection;  // 64 bytes
+    float4x4 inv_viewproj;    // 64 bytes
+    float4   camera_pos;      // 16 bytes (xyz + fov)
+    float4   camera_dir;      // 16 bytes (xyz + aspect)
+    float    time;            // 4 bytes
+    float    delta_time;      // 4 bytes
+    uint     frame_count;     // 4 bytes
+    uint     pad;             // 4 bytes
+} GlobalData;                 // 432 bytes
 
 static inline void mul_mat4(mat4 a, mat4 b, mat4 out)
 {
@@ -98,6 +118,22 @@ static inline void mul_mat4_vec4(mat4 m, vec4 v, vec4 out)
 #ifndef NVSHADERS_INOUT_TYPE
 #define NVSHADERS_INOUT_TYPE(T) inout T
 #endif
+
+struct GlobalData
+{
+    float4x4 view;
+    float4x4 projection;
+    float4x4 viewproj;
+    float4x4 inv_view;
+    float4x4 inv_projection;
+    float4x4 inv_viewproj;
+    float4   camera_pos;   // xyz + fov
+    float4   camera_dir;   // xyz + aspect
+    float    time;
+    float    delta_time;
+    uint     frame_count;
+    uint     pad;
+};
 
 #else
 #error "Unknown language environment"

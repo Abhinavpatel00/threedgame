@@ -193,6 +193,8 @@ static FORCE_INLINE int voxel_index(int x, int y, int z)
 
 static const int voxel_neighbors[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
+
+
 void generate_chunk(Voxel* chunk)
 {
     for(int z = 0; z < CHUNK_SIZE; z++)
@@ -212,7 +214,7 @@ void generate_chunk(Voxel* chunk)
                 if(y < height - 1)
                     chunk[idx].type = VOXEL_STONE;
                 else if(y == height - 1)
-                    chunk[idx].type = VOXEL_GRASS;
+                    chunk[idx].type = VOXEL_DIAMOND_BLOCK;
                 else
                     chunk[idx].type = VOXEL_AIR;
             }
@@ -272,7 +274,8 @@ int main()
         };
 
         renderer_create(&renderer, &desc);
-        {
+     
+	{
             GraphicsPipelineConfig cfg = pipeline_config_default();
             cfg.vert_path              = "compiledshaders/minimal_proc.vert.spv";
             cfg.frag_path              = "compiledshaders/minimal_proc.frag.spv";
@@ -608,7 +611,9 @@ GPU pool (device local)
     uint32_t pp_frame_counter = 0;
     while(!glfwWindowShouldClose(renderer.window))
     {
-        TracyCFrameMark;
+
+
+	    TracyCFrameMark;
         TracyCZoneN(frame_loop_zone, "Frame Loop", 1);
 
         TracyCZoneN(hot_reload_zone, "Hot Reload + Pipeline Rebuild", 1);

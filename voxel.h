@@ -26,7 +26,18 @@ typedef enum
     VOXEL_GRASS,
     VOXEL_DIRT,
     VOXEL_SAND,
+    VOXEL_CYAN_WOOL,
+    VOXEL_GOLD_ORE,
+    VOXEL_IRON_ORE,
+    VOXEL_DIAMOND_ORE,
+    VOXEL_COAL_BLOCK,
+    VOXEL_IRON_BLOCK,
+    VOXEL_GOLD_BLOCK,
+    VOXEL_DIAMOND_BLOCK,
+    VOXEL_EMERALD_BLOCK,
+
     VOXEL_COUNT
+
 } VoxelType;
 
 typedef enum
@@ -88,9 +99,22 @@ VoxelMaterial voxel_materials[VOXEL_COUNT] = {
 
     [VOXEL_STONE] = {.face_tex = CUBE("data/PNG/Tiles/stone.png"), .debug_name = "STONE"},
 
-    [VOXEL_GRASS] = {.face_tex = TOP_BOTTOM( "data/block/grass_block_side.png","data/block/grass_block_top.png","data/block/dirt.png"), .debug_name = "GRASS"},
+    [VOXEL_GRASS] = {.face_tex = TOP_BOTTOM("data/block/grass_block_side.png", "data/block/grass_block_top.png", "data/block/dirt.png"),
+                     .debug_name = "GRASS"},
 
     [VOXEL_DIRT] = {.face_tex = CUBE("data/PNG/Tiles/dirt.png"), .debug_name = "DIRT"},
+
+
+    [VOXEL_IRON_ORE]      = {.face_tex = CUBE("data/block/iron_ore.png"), .debug_name = "IRON_ORE"},
+    [VOXEL_GOLD_ORE]      = {.face_tex = CUBE("data/block/gold_ore.png"), .debug_name = "GOLD_ORE"},
+    [VOXEL_DIAMOND_ORE]   = {.face_tex = CUBE("data/block/diamond_ore.png"), .debug_name = "DIAMOND_ORE"},
+    [VOXEL_COAL_BLOCK]    = {.face_tex = CUBE("data/block/coal_block.png"), .debug_name = "COAL_BLOCK"},
+    [VOXEL_IRON_BLOCK]    = {.face_tex = CUBE("data/block/iron_block.png"), .debug_name = "IRON_BLOCK"},
+    [VOXEL_GOLD_BLOCK]    = {.face_tex = CUBE("data/block/gold_block.png"), .debug_name = "GOLD_BLOCK"},
+    [VOXEL_DIAMOND_BLOCK] = {.face_tex = CUBE("data/block/diamond_block.png"), .debug_name = "DIAMOND_BLOCK"},
+    [VOXEL_EMERALD_BLOCK] = {.face_tex = CUBE("data/block/emerald_block.png"), .debug_name = "EMERALD_BLOCK"},
+
+
 };
 
 

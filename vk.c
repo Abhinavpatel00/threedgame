@@ -1761,6 +1761,15 @@ void renderer_create(Renderer* r, RendererDesc* desc)
 
         create_buffer(r, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, &r->readback_buffer);
     }
+    {
+        forEach(i, MAX_FRAMES_IN_FLIGHT)
+        {
+            create_buffer(r, sizeof(GlobalData),
+                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                          VMA_MEMORY_USAGE_CPU_TO_GPU,
+                          &r->global_ubo[i]);
+        }
+    }
 }
 
 void renderer_destroy(Renderer* r)
@@ -1775,6 +1784,11 @@ void renderer_destroy(Renderer* r)
     pipeline_cache_save(r->device, r->physical_device, r->pipeline_cache, "pipeline_cache.bin");
 
     vkDestroyPipelineCache(r->device, r->pipeline_cache, NULL);
+
+    forEach(i, MAX_FRAMES_IN_FLIGHT)
+    {
+        destroy_buffer(r, &r->global_ubo[i]);
+    }
 
     vkDestroyDevice(r->device, NULL);
 }
@@ -3120,7 +3134,7 @@ TextureID load_texture(Renderer* r, const char* path)
     TextureCreateDesc desc = {.width     = w,
                               .height    = h,
                               .mip_count = 1,
-                              .format    =  VK_FORMAT_R8G8B8A8_SRGB,
+                              .format    = VK_FORMAT_R8G8B8A8_SRGB,
                               .usage     = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
     TextureID id  = create_texture(r, &desc);
