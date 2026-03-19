@@ -71,7 +71,7 @@ typedef struct VkPhysicalDeviceShaderNonSemanticInfoFeaturesKHR
 #define MAX_BINDLESS_TRANSFORMS 65536
 
 
-typedef uint32_t       TextureID;
+typedef uint32_t TextureID;
 
 typedef struct
 {
@@ -207,6 +207,13 @@ typedef struct
     uint32_t          bindless_sampler_count;
     uint32_t          bindless_storage_image_count;
     bool              enable_pipeline_stats;
+
+
+                      VkDeviceSize             size_of_cpu_pool;
+
+                      VkDeviceSize             size_of_gpu_pool;
+
+                      VkDeviceSize             size_of_staging_pool;
 } RendererDesc;
 
 
@@ -275,6 +282,7 @@ typedef struct
     VkCommandPool   cmdbufpool;
     VkSemaphore     image_available_semaphore;
     VkFence         in_flight_fence;
+    uint32_t        staging_tail;
 } FrameContext;
 
 #pragma once
@@ -357,15 +365,50 @@ typedef struct Frustum
 // • albedo texture → linear filtering
 // • pixel-art texture → nearest filtering
 // • shadow map → comparison sampler
+
+typedef enum BufferPoolType
+{
+    BUFFER_POOL_LINEAR,
+    BUFFER_POOL_RING,
+    BUFFER_POOL_TLSF
+} BufferPoolType;
+
+typedef struct BufferPool
+{
+    VkBuffer                 buffer;
+    VmaAllocation            allocation;
+    VkDeviceSize             size_bytes;
+
+    void*                    mapped;
+
+BufferPoolType type;
+    union
+    {
+        flow_linear_allocator linear;
+        flow_ring_allocator   ring;
+        OA_Allocator    tlsf;
+    };
+
+// config
+    VkBufferUsageFlags       usage;
+    VmaMemoryUsage           memory_usage;
+    VmaAllocationCreateFlags alloc_flags;
+} BufferPool;
+
+
+
 typedef struct
-
-
 {
     FlowSwapchain swapchain;
     GLFWwindow*   window;
     FrameContext  frames[MAX_FRAMES_IN_FLIGHT];
     uint32_t      current_frame;
 
+    BufferPool cpu_pool;
+    BufferPool gpu_pool;
+    BufferPool staging_pool;
+
+    VkDeviceAddress gpu_base_addr;
 
     Frustum          frustum;
     VkDescriptorPool imgui_pool;
@@ -422,19 +465,6 @@ typedef struct
     TextureID smaa_search_tex;
 
 } Renderer;
-
-typedef struct BufferPool
-{
-    VkBuffer                 buffer;
-    VmaAllocation            allocation;
-    VkDeviceSize             size_bytes;
-    VkBufferUsageFlags       usage;
-    VmaMemoryUsage           memory_usage;
-    VmaAllocationCreateFlags alloc_flags;
-    void*                    mapped;
-    OA_Allocator             allocator;
-} BufferPool;
-
 typedef struct BufferSlice
 {
     BufferPool*   pool;
@@ -446,13 +476,17 @@ typedef struct BufferSlice
 } BufferSlice;
 
 bool        buffer_pool_init(Renderer*                r,
-                             BufferPool*              pool,
+        
+BufferPoolType type,
+		BufferPool*              pool,
                              VkDeviceSize             size_bytes,
                              VkBufferUsageFlags       usage,
                              VmaMemoryUsage           memory_usage,
                              VmaAllocationCreateFlags alloc_flags,
                              oa_uint32                max_allocs);
 void        buffer_pool_destroy(Renderer* r, BufferPool* pool);
+void        buffer_pool_linear_reset(BufferPool* pool);
+void        buffer_pool_ring_free_to(BufferPool* pool, uint32_t offset);
 BufferSlice buffer_pool_alloc(BufferPool* pool, VkDeviceSize size_bytes, VkDeviceSize alignment);
 void        buffer_pool_free(BufferSlice slice);
 
@@ -674,6 +708,7 @@ void cmd_transition_mip(VkCommandBuffer       cmd,
 
 FORCE_INLINE bool vk_swapchain_acquire(VkDevice device, FlowSwapchain* sc, VkSemaphore image_available, VkFence fence, uint64_t timeout)
 {
+    ///  PFN_vkAcquireNextImage2KHR
     VkResult r = vkAcquireNextImageKHR(device, sc->swapchain, timeout, image_available, fence, &sc->current_image);
 
     if(r == VK_SUCCESS)
@@ -798,7 +833,7 @@ void      destroy_texture(Renderer* r, TextureID id);
 
 TextureID load_texture(Renderer* r, const char* path);
 
-TextureID load_texture_id_in_range(Renderer* r, const char* path,uint32_t max_id);
+TextureID load_texture_id_in_range(Renderer* r, const char* path, uint32_t max_id);
 typedef struct
 {
     VkFilter mag_filter;
@@ -1036,7 +1071,7 @@ static FLOW_INLINE void frame_start(Renderer* renderer, Camera* cam)
 
     mat4 m;
     glm_mat4_copy(cam->view_proj, m);
-// asthough its not hard to derive i got reference          https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
+    // asthough its not hard to derive i got reference          https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
     renderer->frustum.planes[LeftPlane][0] = m[0][3] + m[0][0];
     renderer->frustum.planes[LeftPlane][1] = m[1][3] + m[1][0];
     renderer->frustum.planes[LeftPlane][2] = m[2][3] + m[2][0];
@@ -1120,6 +1155,11 @@ static FLOW_INLINE void frame_start(Renderer* renderer, Camera* cam)
 
     vkResetFences(renderer->device, 1, &renderer->frames[renderer->current_frame].in_flight_fence);
 
+    FrameContext* frame = &renderer->frames[renderer->current_frame];
+
+    buffer_pool_linear_reset(&renderer->cpu_pool);
+    buffer_pool_ring_free_to(&renderer->staging_pool, frame->staging_tail);
+
     GpuProfiler* frame_prof = &renderer->gpuprofiler[renderer->current_frame];
 
     wait_start = time_now_ns();
@@ -1142,6 +1182,9 @@ static FLOW_INLINE void submit_frame(Renderer* r)
     TracyCZoneNC(ctx, "submit_frame", 0xFF0000, 1);
     FrameContext* f   = &r->frames[r->current_frame];
     uint32_t      img = r->swapchain.current_image;
+
+    if(r->staging_pool.type == BUFFER_POOL_RING)
+        f->staging_tail = r->staging_pool.ring.head;
 
     VkCommandBufferSubmitInfo cmd = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = f->cmdbuf};
 
@@ -1172,7 +1215,6 @@ static FLOW_INLINE void submit_frame(Renderer* r)
 
 
 bool sampler_create(Renderer* r, const VkSamplerCreateInfo* ci, uint32_t* out_sampler_id);
-
 
 
 void renderer_record_screenshot(Renderer* r, VkCommandBuffer cmd);
@@ -1212,14 +1254,12 @@ typedef struct RendererPipelines
 } RendererPipelines;
 
 
-
-
-typedef uint32_t       PipelineID;
-extern flow_id_pool    texture_pool;
-extern flow_id_pool    sampler_pool;
-extern Texture         textures[MAX_BINDLESS_TEXTURES];  // reference by textureid
-extern VkSampler       samplers[MAX_BINDLESS_SAMPLERS];  // reference by samplerid
-extern RendererPipelines g_render_pipelines  ;
+typedef uint32_t         PipelineID;
+extern flow_id_pool      texture_pool;
+extern flow_id_pool      sampler_pool;
+extern Texture           textures[MAX_BINDLESS_TEXTURES];  // reference by textureid
+extern VkSampler         samplers[MAX_BINDLESS_SAMPLERS];  // reference by samplerid
+extern RendererPipelines g_render_pipelines;
 
 PipelineID pipeline_create_graphics(Renderer* r, GraphicsPipelineConfig* cfg);
 PipelineID pipeline_create_compute(Renderer* r, const char* path);
@@ -1228,13 +1268,3 @@ VkPipeline pipeline_get(PipelineID id);
 
 void pipeline_mark_dirty(const char* changed_shader);
 void pipeline_rebuild(Renderer* r);
-
-
-
-
-
-
-
-
-
-

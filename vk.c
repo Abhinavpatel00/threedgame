@@ -1764,12 +1764,29 @@ void renderer_create(Renderer* r, RendererDesc* desc)
     {
         forEach(i, MAX_FRAMES_IN_FLIGHT)
         {
-            create_buffer(r, sizeof(GlobalData),
-                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                          VMA_MEMORY_USAGE_CPU_TO_GPU,
+            create_buffer(r, sizeof(GlobalData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU,
                           &r->global_ubo[i]);
         }
     }
+
+    {
+        buffer_pool_init(r, BUFFER_POOL_LINEAR, &r->cpu_pool, desc->size_of_cpu_pool,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         VMA_MEMORY_USAGE_AUTO,
+                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, 2048);
+        buffer_pool_init(r, BUFFER_POOL_TLSF, &r->gpu_pool, desc->size_of_gpu_pool,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VMA_MEMORY_USAGE_GPU_ONLY, 0, 2048);
+        buffer_pool_init(r, BUFFER_POOL_RING, &r->staging_pool, desc->size_of_staging_pool,
+                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO,
+                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, 2048);
+
+        VkBufferDeviceAddressInfo addrInfo = {.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+                                              .buffer = r->gpu_pool.buffer};
+        r->gpu_base_addr                   = vkGetBufferDeviceAddress(r->device, &addrInfo);
+    }
+
+
 }
 
 void renderer_destroy(Renderer* r)
@@ -1793,7 +1810,114 @@ void renderer_destroy(Renderer* r)
     vkDestroyDevice(r->device, NULL);
 }
 
-bool buffer_pool_init(Renderer*                r,
+
+//
+//
+//
+//
+/*
+Frame 0: [AAAAA-----]
+Frame 1: [-----BBBBB]
+Frame 2: reuse AAAAA
+// Renderer
+//  ├── BufferPool (CPU)
+//  │     ├── mapped
+//  │     ├── linear allocator
+//  │
+//  ├── BufferPool (GPU)
+//  │     ├── base_address
+//  │     ├── oa allocator
+//  │
+//  ├── BufferPool (Staging)
+//  │     ├── mapped
+//  │     ├── transient allocator
+//
+
+CPU Pool (per frame)
+ └── Linear allocator
+     reset every frame
+
+Staging Pool (transient)
+ └── Ring / linear allocator
+     reuse after GPU sync
+
+GPU Pool (persistent)
+     handles long-lived resources
+
+The core idea (burn this in)
+
+Your CPU per-frame data is not “important.”
+It’s disposable scaffolding.
+
+Frame N:
+  build data → send to GPU → forget it existed
+What is actually happening
+Frame N:
+  allocate → use → submit
+
+Frame N+1:
+  same memory reused
+
+Frame N+2:
+  reused again
+
+The CPU data is already consumed by GPU.
+Keeping it around is like saving scratch paper after the exam.
+CPU data is ephemeral
+
+Examples:
+
+draw commands
+
+per-frame UBOs
+
+instance data
+
+culling results
+
+These are:
+
+valid for ~16ms
+then completely useless
+2. GPU already has what it needs
+
+Once you do:
+
+vkCmdDrawIndirect(...)
+
+or upload buffer data:
+
+CPU memory → GPU buffer → DONE
+
+The CPU copy is irrelevant.
+
+3. You already have frame buffering
+
+You’re using:
+
+FrameContext frames[MAX_FRAMES_IN_FLIGHT];
+
+So you’re already doing:
+
+Frame 0 uses region A
+Frame 1 uses region B
+Frame 2 uses region C
+
+Which means by the time you reuse memory:
+👉 GPU is done with it
+staging_pool:
+  purpose → transient uploads
+  allocator → ring
+CPU Pool        → Linear allocator (reset every frame)
+Staging Pool    → Ring allocator (sync with GPU fences)
+GPU Pool        → oa allocator (we already have it)
+
+	*/
+
+
+bool buffer_pool_init(Renderer* r,
+
+                      BufferPoolType           type,
                       BufferPool*              pool,
                       VkDeviceSize             size_bytes,
                       VkBufferUsageFlags       usage,
@@ -1838,7 +1962,21 @@ bool buffer_pool_init(Renderer*                r,
     pool->alloc_flags  = alloc_flags;
     pool->mapped       = out_info.pMappedData;
 
-    oa_init(&pool->allocator, (oa_uint32)size_bytes, max_allocs);
+
+    pool->type = type;
+
+    if(type == BUFFER_POOL_LINEAR)
+    {
+        flow_linear_init(&pool->linear, pool->mapped, (uint32_t)size_bytes);
+    }
+    else if(type == BUFFER_POOL_RING)
+    {
+        flow_ring_init(&pool->ring, pool->mapped, (uint32_t)size_bytes);
+    }
+    else if(type == BUFFER_POOL_TLSF)
+    {
+        oa_init(&pool->tlsf, (oa_uint32)size_bytes, max_allocs);
+    }
 
     return true;
 }
@@ -1847,15 +1985,31 @@ void buffer_pool_destroy(Renderer* r, BufferPool* pool)
 {
     if(!r || !pool)
         return;
-
-    oa_destroy(&pool->allocator);
+    if(pool->type == BUFFER_POOL_TLSF)
+    {
+        oa_destroy(&pool->tlsf);
+    }
 
     if(pool->buffer != VK_NULL_HANDLE)
         vmaDestroyBuffer(r->vmaallocator, pool->buffer, pool->allocation);
 
     memset(pool, 0, sizeof(*pool));
 }
+void buffer_pool_linear_reset(BufferPool* pool)
+{
+    if(pool->type == BUFFER_POOL_LINEAR)
+    {
+        flow_linear_reset(&pool->linear);
+    }
+}
 
+void buffer_pool_ring_free_to(BufferPool* pool, uint32_t offset)
+{
+    if(pool->type == BUFFER_POOL_RING)
+    {
+        flow_ring_free_to(&pool->ring, offset);
+    }
+}
 BufferSlice buffer_pool_alloc(BufferPool* pool, VkDeviceSize size_bytes, VkDeviceSize alignment)
 {
     BufferSlice slice = {0};
@@ -1868,23 +2022,50 @@ BufferSlice buffer_pool_alloc(BufferPool* pool, VkDeviceSize size_bytes, VkDevic
 
     if(size_bytes > UINT32_MAX || alignment > UINT32_MAX)
         return slice;
+    uint32_t size  = (uint32_t)size_bytes;
+    uint32_t align = (uint32_t)alignment;
 
-    OA_Allocation allocation = (alignment > 1) ?
-                                   oa_allocate_aligned(&pool->allocator, (oa_uint32)size_bytes, (oa_uint32)alignment) :
-                                   oa_allocate(&pool->allocator, (oa_uint32)size_bytes);
 
-    if(allocation.offset == OA_NO_SPACE)
-        return slice;
+    uint32_t offset = 0;
 
-    slice.pool       = pool;
-    slice.buffer     = pool->buffer;
-    slice.offset     = allocation.offset;
-    slice.size       = size_bytes;
-    slice.allocation = allocation;
+    switch(pool->type)
+    {
+        case BUFFER_POOL_LINEAR: {
+            void* ptr = flow_linear_alloc(&pool->linear, size, align);
+            if(!ptr)
+                return slice;
+
+            offset = (uint32_t)((uint8_t*)ptr - (uint8_t*)pool->mapped);
+        }
+        break;
+
+        case BUFFER_POOL_RING: {
+            void* ptr = flow_ring_alloc(&pool->ring, size, align, &offset);
+            if(!ptr)
+                return slice;
+        }
+        break;
+
+        case BUFFER_POOL_TLSF: {
+            OA_Allocation a = (align > 1) ? oa_allocate_aligned(&pool->tlsf, size, align) : oa_allocate(&pool->tlsf, size);
+
+            if(a.offset == OA_NO_SPACE)
+                return slice;
+
+            offset           = a.offset;
+            slice.allocation = a;
+        }
+        break;
+    }
+
+
+    slice.pool   = pool;
+    slice.buffer = pool->buffer;
+    slice.offset = offset;
+    slice.size   = size_bytes;
 
     if(pool->mapped)
-        slice.mapped = (void*)((uint8_t*)pool->mapped + allocation.offset);
-
+        slice.mapped = (uint8_t*)pool->mapped + offset;
     return slice;
 }
 
@@ -1893,7 +2074,12 @@ void buffer_pool_free(BufferSlice slice)
     if(!slice.pool)
         return;
 
-    oa_free(&slice.pool->allocator, slice.allocation);
+    BufferPool* pool = slice.pool;
+
+    if(pool->type == BUFFER_POOL_TLSF)
+    {
+        oa_free(&pool->tlsf, slice.allocation);
+    }
 }
 
 VkSurfaceCapabilities2KHR query_surface_capabilities(VkPhysicalDevice gpu, VkSurfaceKHR surface)

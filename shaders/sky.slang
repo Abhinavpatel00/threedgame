@@ -17,7 +17,6 @@ struct SkyPush
 
 [[vk::push_constant]] SkyPush push;
 
-// ── Vertex ───────────────────────────────────────────────────────────────────
 
 struct VSOutput
 {

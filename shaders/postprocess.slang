@@ -14,6 +14,8 @@ struct PostPush
   uint width;
   uint height;
 
+  uint  frame;
+  float exposure;
   // effect enable flags (bitfield)
   uint flags;
 
@@ -21,7 +23,6 @@ struct PostPush
   uint tonemap_mode;
 
   // core
-  float exposure;
   float gamma_value;
 
   // color grading
@@ -40,7 +41,6 @@ struct PostPush
   float grain_intensity;
   float sepia_intensity;
   float dither_strength;
-  uint  frame;
 
   // lift / gain (shadows / highlights color wheels)
   float lift_r;
@@ -116,7 +116,7 @@ inline float3 tonemapACES(float3 color)
                                           -0.53108F, 1.10813F, -0.07276F,  //
                                           -0.07367F, -0.00605F, 1.07602F);
   color                        = mul(color, ACESOutputMat);
-  return color;
+  return toLinear(color);
 }
 
 
@@ -146,10 +146,15 @@ void cs_main(uint3 id: SV_DispatchThreadID)
   Texture2D           src = textures[push.src_texture_id];
   RWTexture2D<float4> dst = storage_images[push.output_image_id];
 
-  float3 color = src.Load(int3(pix, 0)).rgb;
-   color = filmic(color);
-   color = toLinear(saturate(color));
-  //
+float3 color = src.Load(int3(pix, 0)).rgb;
+
+// exposure control
+color *= exp2(push.exposure);
+
+color = tonemapACES(color);
+
+
+//
 
   dst[pix] = float4(color, 1.0);
 }

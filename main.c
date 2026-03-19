@@ -20,25 +20,18 @@
 #include "external/dmon/dmon.h"
 #include "external/tracy/public/tracy/TracyC.h"
 
-#define RUN_ONCE_N(name) \
-for (static bool name = true; name; name = false)
+#define RUN_ONCE_N(name) for(static bool name = true; name; name = false)
 static bool voxel_debug     = true;
 static bool take_screenshot = true;
 static bool wireframe_mode  = false;
 #define VALIDATION false
-#define KB(x) ((x) * 1024ULL)
-#define MB(x) ((x) * 1024ULL * 1024ULL)
-#define GB(x) ((x) * 1024ULL * 1024ULL * 1024ULL)
-#define PAD(name, size) uint8_t name[(size)]
 // imp gpu validation shows false positives may be bacause of data races
 
-#define PRINT_FIELD(type, field) \
-    printf("%-20s offset = %3zu  align = %2zu  size = %2zu\n", \
-           #field, offsetof(type, field), _Alignof(((type*)0)->field), sizeof(((type*)0)->field))
+#define PRINT_FIELD(type, field)                                                                                       \
+    printf("%-20s offset = %3zu  align = %2zu  size = %2zu\n", #field, offsetof(type, field),                          \
+           _Alignof(((type*)0)->field), sizeof(((type*)0)->field))
 
-#define PRINT_STRUCT(type) \
-    printf("\nSTRUCT %-20s size = %zu  align = %zu\n\n", \
-           #type, sizeof(type), _Alignof(type));
+#define PRINT_STRUCT(type) printf("\nSTRUCT %-20s size = %zu  align = %zu\n\n", #type, sizeof(type), _Alignof(type));
 
 static inline size_t flow_ravel_index(const size_t* coord, const size_t* strides, size_t ndim)
 {
@@ -196,7 +189,6 @@ static FORCE_INLINE int voxel_index(int x, int y, int z)
 static const int voxel_neighbors[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
 
-
 void generate_chunk(Voxel* chunk)
 {
     for(int z = 0; z < CHUNK_SIZE; z++)
@@ -273,11 +265,15 @@ int main()
             .enable_pipeline_stats            = false,
             .swapchain_preferred_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR,
 
+            .size_of_cpu_pool = MB(32),
+            .size_of_gpu_pool = MB(512),
+            .size_of_staging_pool = MB(128),
+
         };
 
         renderer_create(&renderer, &desc);
-     
-	{
+
+        {
             GraphicsPipelineConfig cfg = pipeline_config_default();
             cfg.vert_path              = "compiledshaders/minimal_proc.vert.spv";
             cfg.frag_path              = "compiledshaders/minimal_proc.frag.spv";
@@ -398,73 +394,21 @@ int main()
         cfg.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
         pipelines.sky              = pipeline_create_graphics(&renderer, &cfg);
     }
-    /*
-    CPU
- │
- ▼
-UPLOAD BUFFER (mapped)
- ├── draw commands
- ├── counts
- └── staging data
-        │
-        │ vkCmdCopyBuffer
-        ▼
-GPU BUFFER (device local)
- ├── packed voxel faces
- ├── instance arrays
- └── chunk data
-
-
- CPU pool (mapped)
- ├─ indirect draw commands
- ├─ draw counts
- └─ temporary upload data
-
-STAGING pool
- └─ big uploads (voxel faces, meshes)
-
-GPU pool (device local)
- ├─ packed voxel faces
- ├─ instance arrays
- └─ chunk data
- */
-
-
-    BufferPool cpu_pool = {0};
-
-    BufferPool gpu_pool = {0};
-
-    BufferPool staging_pool = {0};
-
-    buffer_pool_init(&renderer, &cpu_pool, MB(64),
-                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VMA_MEMORY_USAGE_AUTO,
-                     VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, 2048);
-    buffer_pool_init(&renderer, &gpu_pool, MB(512),
-                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                     VMA_MEMORY_USAGE_GPU_ONLY, 0, 2048);
-    buffer_pool_init(&renderer, &staging_pool, MB(128), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO,
-                     VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, 2048);
-
-    VkBufferDeviceAddressInfo addrInfo = {.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = gpu_pool.buffer};
-    VkDeviceAddress base_shader_addr = vkGetBufferDeviceAddress(renderer.device, &addrInfo);
-
     TextureID tex_id = load_texture(&renderer, "/home/lk/myprojects/flowgame/data/PNG/Tiles/greystone.png");
 
     /* buffer slices start  */
 
-    BufferSlice indirect_slice = buffer_pool_alloc(&cpu_pool, sizeof(VkDrawIndirectCommand), 16);
+    BufferSlice indirect_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(VkDrawIndirectCommand), 16);
 
-    BufferSlice count_slice = buffer_pool_alloc(&cpu_pool, sizeof(uint32_t), 4);
+    BufferSlice count_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(uint32_t), 4);
     /* initialise voxel face storage then fill it with data and upload on gpu */
 
 
     voxel_materials_init(&renderer);
-    BufferSlice mat_staging = buffer_pool_alloc(&staging_pool, sizeof(gpu_materials), 16);
+    BufferSlice mat_staging = buffer_pool_alloc(&renderer.staging_pool, sizeof(gpu_materials), 16);
 
     memcpy(mat_staging.mapped, gpu_materials, sizeof(gpu_materials));
-    BufferSlice material_slice = buffer_pool_alloc(&gpu_pool, sizeof(gpu_materials), 16);
-
+    BufferSlice material_slice = buffer_pool_alloc(&renderer.gpu_pool, sizeof(gpu_materials), 16);
 
 
     static Voxel chunk[CHUNK_VOLUME];
@@ -511,13 +455,13 @@ GPU pool (device local)
     }
 
     uint32_t    voxel_face_count = arrlen(faces);
-    BufferSlice cpu_faces        = buffer_pool_alloc(&cpu_pool, voxel_face_count * sizeof(uint32_t), 4);
+    BufferSlice cpu_faces        = buffer_pool_alloc(&renderer.cpu_pool, voxel_face_count * sizeof(uint32_t), 4);
 
     uint32_t* cpu_face_data = cpu_faces.mapped;
     memcpy(cpu_faces.mapped, faces, voxel_face_count * sizeof(uint32_t));
 
 
-    BufferSlice gpu_faces = buffer_pool_alloc(&gpu_pool, voxel_face_count * sizeof(uint32_t), 16);
+    BufferSlice gpu_faces = buffer_pool_alloc(&renderer.gpu_pool, voxel_face_count * sizeof(uint32_t), 16);
     /* buffer slices ends  */
 
     VkDrawIndirectCommand* cpu_indirect = (VkDrawIndirectCommand*)indirect_slice.mapped;
@@ -585,18 +529,18 @@ GPU pool (device local)
     // may be all push constant can be defined in one header that both gpu and cpu share
 
 
-    VkDeviceAddress face_pointer     = base_shader_addr + gpu_faces.offset;
-    VkDeviceAddress material_pointer = base_shader_addr + material_slice.offset;
+    VkDeviceAddress face_pointer     = renderer.gpu_base_addr + gpu_faces.offset;
+    VkDeviceAddress material_pointer = renderer.gpu_base_addr + material_slice.offset;
 
     PUSH_CONSTANT(Push, VkDeviceAddress face_ptr;            //8
                   VkDeviceAddress mat_ptr; uint face_count;  //
                   float                         aspect;      //4
 
-    float _pad0[2];             // 24 → 32
-		  vec3                          cam_pos;     // camera world position
-                  uint                          pad1;        // alignment
-                  vec3                          cam_dir;     // camera forward (normalized)
-                  uint                          pad2;
+                  float _pad0[2];  // 24 → 32
+                  vec3  cam_pos;   // camera world position
+                  uint  pad1;      // alignment
+                  vec3  cam_dir;   // camera forward (normalized)
+                  uint  pad2;
 
                   float view_proj[4][4]; uint texture_id; uint sampler_id;
 
@@ -604,9 +548,16 @@ GPU pool (device local)
 
     PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint32_t sampler_id;
 
-                  uint32_t width; uint32_t height;
+                  uint32_t width;
 
-                  uint frame;
+
+                  uint32_t height;
+
+                  uint frame
+
+                  ;
+
+                  float exposure;
 
     );
 
@@ -620,16 +571,8 @@ GPU pool (device local)
 
     );
 
-    PUSH_CONSTANT(SkyPush,
-        float inv_proj[4][4];
-        float basis_right[4];
-        float basis_up[4];
-        float basis_back[4];
-        float time;
-        float cirrus;
-        float cumulus;
-        float pad0;
-    );
+    PUSH_CONSTANT(SkyPush, float inv_proj[4][4]; float basis_right[4]; float basis_up[4]; float basis_back[4];
+                  float time; float cirrus; float cumulus; float pad0;);
 
     dmon_init();
     dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
@@ -639,7 +582,7 @@ GPU pool (device local)
     {
 
 
-	    TracyCFrameMark;
+        TracyCFrameMark;
         TracyCZoneN(frame_loop_zone, "Frame Loop", 1);
 
         TracyCZoneN(hot_reload_zone, "Hot Reload + Pipeline Rebuild", 1);
@@ -822,15 +765,14 @@ GPU pool (device local)
                     sky_push.basis_back[0]  = -forward[0];
                     sky_push.basis_back[1]  = -forward[1];
                     sky_push.basis_back[2]  = -forward[2];
-sky_push.time = (float)glfwGetTime() * 0.2f;
+                    sky_push.time           = (float)glfwGetTime() * 0.2f;
                     sky_push.cirrus         = 0.4f;
                     sky_push.cumulus        = 0.8f;
 
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      g_render_pipelines.pipelines[pipelines.sky]);
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.sky]);
                     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-                    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout,
-                                       VK_SHADER_STAGE_ALL, 0, sizeof(SkyPush), &sky_push);
+                    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0,
+                                       sizeof(SkyPush), &sky_push);
                     vkCmdDraw(cmd, 4, 1, 0, 0);
                 }
 
@@ -915,6 +857,8 @@ sky_push.time = (float)glfwGetTime() * 0.2f;
             pp_push.width           = renderer.swapchain.extent.width;
             pp_push.height          = renderer.swapchain.extent.height;
             pp_push.frame           = pp_frame_counter++;
+
+            pp_push.exposure = 1.2;
             vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PostPush), &pp_push);
 
             uint32_t gx = (pp_push.width + 15) / 16;
@@ -1116,8 +1060,6 @@ sky_push.time = (float)glfwGetTime() * 0.2f;
     PRINT_FIELD(Push, view_proj);
     PRINT_FIELD(Push, texture_id);
     PRINT_FIELD(Push, sampler_id);
-
-
     //    ANALYZE_STRUCT(ImageState);
     //renderer_destroy(&renderer);
     return 0;
