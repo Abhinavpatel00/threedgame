@@ -1786,7 +1786,38 @@ void renderer_create(Renderer* r, RendererDesc* desc)
         r->gpu_base_addr                   = vkGetBufferDeviceAddress(r->device, &addrInfo);
     }
 
+    {
 
+        {
+            GraphicsPipelineConfig cfg = pipeline_config_default();
+            cfg.vert_path              = "compiledshaders/smaa_edge.vert.spv";
+            cfg.frag_path              = "compiledshaders/smaa_edge.frag.spv";
+            cfg.color_attachment_count = 1;
+            cfg.color_formats          = &r->smaa_edges[1].format;
+
+            r->smaa_pipelines.smaa_edge = pipeline_create_graphics(r, &cfg);
+        }
+
+        {
+            GraphicsPipelineConfig cfg = pipeline_config_default();
+            cfg.vert_path              = "compiledshaders/smaa_weight.vert.spv";
+            cfg.frag_path              = "compiledshaders/smaa_weight.frag.spv";
+            cfg.color_attachment_count = 1;
+            cfg.color_formats          = &r->smaa_weights[1].format;
+
+            r->smaa_pipelines.smaa_weight = pipeline_create_graphics(r, &cfg);
+        }
+
+        {
+            GraphicsPipelineConfig cfg = pipeline_config_default();
+            cfg.vert_path              = "compiledshaders/smaa_blend.vert.spv";
+            cfg.frag_path              = "compiledshaders/smaa_blend.frag.spv";
+            cfg.color_attachment_count = 1;
+            cfg.color_formats          = &r->ldr_color[0].format;
+
+            r->smaa_pipelines.smaa_blend = pipeline_create_graphics(r, &cfg);
+        }
+    }
 }
 
 void renderer_destroy(Renderer* r)

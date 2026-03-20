@@ -209,11 +209,11 @@ typedef struct
     bool              enable_pipeline_stats;
 
 
-                      VkDeviceSize             size_of_cpu_pool;
+    VkDeviceSize size_of_cpu_pool;
 
-                      VkDeviceSize             size_of_gpu_pool;
+    VkDeviceSize size_of_gpu_pool;
 
-                      VkDeviceSize             size_of_staging_pool;
+    VkDeviceSize size_of_staging_pool;
 } RendererDesc;
 
 
@@ -375,26 +375,25 @@ typedef enum BufferPoolType
 
 typedef struct BufferPool
 {
-    VkBuffer                 buffer;
-    VmaAllocation            allocation;
-    VkDeviceSize             size_bytes;
+    VkBuffer      buffer;
+    VmaAllocation allocation;
+    VkDeviceSize  size_bytes;
 
-    void*                    mapped;
+    void* mapped;
 
-BufferPoolType type;
+    BufferPoolType type;
     union
     {
         flow_linear_allocator linear;
         flow_ring_allocator   ring;
-        OA_Allocator    tlsf;
+        OA_Allocator          tlsf;
     };
 
-// config
+    // config
     VkBufferUsageFlags       usage;
     VmaMemoryUsage           memory_usage;
     VmaAllocationCreateFlags alloc_flags;
 } BufferPool;
-
 
 
 typedef struct
@@ -463,6 +462,13 @@ typedef struct
     TextureID dummy_texture;
     TextureID smaa_area_tex;
     TextureID smaa_search_tex;
+    struct
+    {
+        uint32_t smaa_edge;
+        uint32_t smaa_weight;
+        uint32_t smaa_blend;
+    } smaa_pipelines;
+
 
 } Renderer;
 typedef struct BufferSlice
@@ -475,10 +481,10 @@ typedef struct BufferSlice
     OA_Allocation allocation;
 } BufferSlice;
 
-bool        buffer_pool_init(Renderer*                r,
-        
-BufferPoolType type,
-		BufferPool*              pool,
+bool        buffer_pool_init(Renderer* r,
+
+                             BufferPoolType           type,
+                             BufferPool*              pool,
                              VkDeviceSize             size_bytes,
                              VkBufferUsageFlags       usage,
                              VmaMemoryUsage           memory_usage,

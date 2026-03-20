@@ -105,15 +105,15 @@ and also there should be save position to file option for that light so that    
  }
 
 */
+
+
 typedef struct
 {
     uint32_t fullscreen;
     uint32_t postprocess;
     uint32_t triangle;
     uint32_t triangle_wireframe;
-    uint32_t smaa_edge;
-    uint32_t smaa_weight;
-    uint32_t smaa_blend;
+
     uint32_t beam;
     uint32_t sky;
 } EnginePipelines;
@@ -265,8 +265,8 @@ int main()
             .enable_pipeline_stats            = false,
             .swapchain_preferred_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR,
 
-            .size_of_cpu_pool = MB(32),
-            .size_of_gpu_pool = MB(512),
+            .size_of_cpu_pool     = MB(32),
+            .size_of_gpu_pool     = MB(512),
             .size_of_staging_pool = MB(128),
 
         };
@@ -307,36 +307,6 @@ int main()
             pipelines.triangle_wireframe = pipeline_create_graphics(&renderer, &cfg);
         }
 
-
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/smaa_edge.vert.spv";
-            cfg.frag_path              = "compiledshaders/smaa_edge.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.smaa_edges[1].format;
-
-            pipelines.smaa_edge = pipeline_create_graphics(&renderer, &cfg);
-        }
-
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/smaa_weight.vert.spv";
-            cfg.frag_path              = "compiledshaders/smaa_weight.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.smaa_weights[1].format;
-
-            pipelines.smaa_weight = pipeline_create_graphics(&renderer, &cfg);
-        }
-
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/smaa_blend.vert.spv";
-            cfg.frag_path              = "compiledshaders/smaa_blend.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.ldr_color[0].format;
-
-            pipelines.smaa_blend = pipeline_create_graphics(&renderer, &cfg);
-        }
         {
 
             GraphicsPipelineConfig beam = pipeline_config_default();
@@ -887,7 +857,7 @@ int main()
 
             vkCmdBeginRendering(cmd, &rendering);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.smaa_edge]);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_edge]);
 
             vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
 
@@ -921,7 +891,7 @@ int main()
 
             vkCmdBeginRendering(cmd, &rendering);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.smaa_weight]);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_weight]);
 
 
             vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
@@ -958,7 +928,7 @@ int main()
 
             vkCmdBeginRendering(cmd, &rendering);
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.smaa_blend]);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_blend]);
 
 
             vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
@@ -1022,7 +992,6 @@ int main()
         if(take_screenshot)
         {
             renderer_record_screenshot(&renderer, cmd);
-            take_screenshot = false;
         }
         image_transition_swapchain(renderer.frames[renderer.current_frame].cmdbuf, &renderer.swapchain,
                                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
@@ -1039,7 +1008,9 @@ int main()
         if(take_screenshot)
         {
             renderer_save_screenshot(&renderer);
-        }
+        
+            take_screenshot = false;
+	}
 
         TracyCZoneEnd(frame_loop_zone);
     }
