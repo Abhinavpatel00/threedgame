@@ -496,6 +496,27 @@ void        buffer_pool_ring_free_to(BufferPool* pool, uint32_t offset);
 BufferSlice buffer_pool_alloc(BufferPool* pool, VkDeviceSize size_bytes, VkDeviceSize alignment);
 void        buffer_pool_free(BufferSlice slice);
 
+/*
+Staging frame-lifetime rule:
+- Slices allocated from `staging_pool` are transient.
+- They remain valid only until the frame using them completes (fence signal).
+- Do not cache `mapped` pointers or staging offsets across frames.
+*/
+bool renderer_upload_buffer_to_slice(Renderer* r,
+                                     VkCommandBuffer cmd,
+                                     BufferSlice     dst_slice,
+                                     const void*     src_data,
+                                     VkDeviceSize    size_bytes,
+                                     VkDeviceSize    staging_alignment);
+
+/* Allocates destination from `gpu_pool`, stages upload, records `vkCmdCopyBuffer`, returns destination slice. */
+BufferSlice renderer_upload_buffer(Renderer* r,
+                                   VkCommandBuffer cmd,
+                                   const void*     src_data,
+                                   VkDeviceSize    size_bytes,
+                                   VkDeviceSize    staging_alignment,
+                                   VkDeviceSize    dst_alignment);
+
 #define MAX_VERTEX_ATTRS 8
 typedef enum VertexFormat
 {
@@ -835,6 +856,16 @@ typedef struct
 
 TextureID create_texture(Renderer* r, const TextureCreateDesc* desc);
 void      destroy_texture(Renderer* r, TextureID id);
+
+/* Texture upload helper kept separate from generic buffer uploads due to image row/layout constraints. */
+bool renderer_upload_texture_2d(Renderer* r,
+                                VkCommandBuffer cmd,
+                                Texture*        tex,
+                                const void*     pixels,
+                                VkDeviceSize    size_bytes,
+                                uint32_t        width,
+                                uint32_t        height,
+                                uint32_t        mip_level);
 
 
 TextureID load_texture(Renderer* r, const char* path);

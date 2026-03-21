@@ -192,6 +192,25 @@ Circular buffer for streaming data. Track the tail offset as it cycles.
 buffer_pool_ring_free_to(&staging_pool, frame->staging_tail);
 ```
 
+Frame-lifetime rule for staging ring slices:
+
+- Staging slices are transient and frame-scoped.
+- They are valid only until the frame fence signals.
+- Do not keep `mapped` pointers or staging offsets across frames.
+
+Upload helper split:
+
+- `renderer_upload_buffer_to_slice(...)` for buffer-to-buffer staged copies.
+- `renderer_upload_buffer(...)` when destination allocation should also be handled.
+- `renderer_upload_texture_2d(...)` for texture copies (separate path due to image constraints).
+
+Example staged buffer upload:
+
+```c
+BufferSlice dst = buffer_pool_alloc(&renderer.gpu_pool, sizeof(MaterialGpu), 16);
+renderer_upload_buffer_to_slice(&renderer, cmd, dst, &material_gpu, sizeof(MaterialGpu), 16);
+```
+
 #### TLSF Pool
 Offset allocator-based pool for random allocation/deallocation.
 

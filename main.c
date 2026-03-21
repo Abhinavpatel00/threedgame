@@ -380,9 +380,6 @@ int main()
 
 
     voxel_materials_init(&renderer);
-    BufferSlice mat_staging = buffer_pool_alloc(&renderer.staging_pool, sizeof(gpu_materials), 16);
-
-    memcpy(mat_staging.mapped, gpu_materials, sizeof(gpu_materials));
     BufferSlice material_slice = buffer_pool_alloc(&renderer.gpu_pool, sizeof(gpu_materials), 16);
 
 
@@ -693,9 +690,7 @@ int main()
                 vkCmdCopyBuffer(cmd, cpu_faces.buffer, gpu_faces.buffer, 1, &copy);
             }
             {
-                VkBufferCopy mat_copy = {.srcOffset = mat_staging.offset, .dstOffset = material_slice.offset, .size = sizeof(gpu_materials)};
-
-                vkCmdCopyBuffer(cmd, mat_staging.buffer, material_slice.buffer, 1, &mat_copy);
+                renderer_upload_buffer_to_slice(&renderer, cmd, material_slice, gpu_materials, sizeof(gpu_materials), 16);
             }
         }
 

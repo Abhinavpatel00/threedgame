@@ -2113,6 +2113,83 @@ void buffer_pool_free(BufferSlice slice)
     }
 }
 
+bool renderer_upload_buffer_to_slice(Renderer* r, VkCommandBuffer cmd, BufferSlice dst_slice, const void* src_data, VkDeviceSize size_bytes, VkDeviceSize staging_alignment)
+{
+    if(!r || !cmd || !src_data || !dst_slice.buffer || size_bytes == 0)
+        return false;
+
+    if(size_bytes > dst_slice.size)
+        return false;
+
+    BufferSlice staging_slice = buffer_pool_alloc(&r->staging_pool, size_bytes, staging_alignment);
+    if(!staging_slice.buffer || !staging_slice.mapped)
+        return false;
+
+    memcpy(staging_slice.mapped, src_data, (size_t)size_bytes);
+
+    VkBufferCopy copy = {
+        .srcOffset = staging_slice.offset,
+        .dstOffset = dst_slice.offset,
+        .size      = size_bytes,
+    };
+    vkCmdCopyBuffer(cmd, staging_slice.buffer, dst_slice.buffer, 1, &copy);
+
+    return true;
+}
+
+BufferSlice renderer_upload_buffer(Renderer* r, VkCommandBuffer cmd, const void* src_data, VkDeviceSize size_bytes, VkDeviceSize staging_alignment, VkDeviceSize dst_alignment)
+{
+    BufferSlice dst_slice = {0};
+    if(!r || !cmd || !src_data || size_bytes == 0)
+        return dst_slice;
+
+    dst_slice = buffer_pool_alloc(&r->gpu_pool, size_bytes, dst_alignment);
+    if(!dst_slice.buffer)
+        return dst_slice;
+
+    if(!renderer_upload_buffer_to_slice(r, cmd, dst_slice, src_data, size_bytes, staging_alignment))
+    {
+        buffer_pool_free(dst_slice);
+        memset(&dst_slice, 0, sizeof(dst_slice));
+    }
+
+    return dst_slice;
+}
+
+bool renderer_upload_texture_2d(Renderer*       r,
+                                VkCommandBuffer cmd,
+                                Texture*        tex,
+                                const void*     pixels,
+                                VkDeviceSize    size_bytes,
+                                uint32_t        width,
+                                uint32_t        height,
+                                uint32_t        mip_level)
+{
+    if(!r || !cmd || !tex || !pixels || size_bytes == 0)
+        return false;
+
+    Buffer staging = {0};
+    if(!create_buffer(r, size_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY, &staging))
+        return false;
+
+    memcpy(staging.mapping, pixels, (size_t)size_bytes);
+
+    VkBufferImageCopy region = {
+        .bufferOffset                    = 0,
+        .bufferRowLength                 = 0,
+        .bufferImageHeight               = 0,
+        .imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .imageSubresource.mipLevel       = mip_level,
+        .imageSubresource.baseArrayLayer = 0,
+        .imageSubresource.layerCount     = 1,
+        .imageExtent                     = {width, height, 1},
+    };
+
+    vkCmdCopyBufferToImage(cmd, staging.buffer, tex->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    destroy_buffer(r, &staging);
+    return true;
+}
+
 VkSurfaceCapabilities2KHR query_surface_capabilities(VkPhysicalDevice gpu, VkSurfaceKHR surface)
 {
     VkPhysicalDeviceSurfaceInfo2KHR info = {
@@ -3180,6 +3257,26 @@ TextureID create_texture(Renderer* r, const TextureCreateDesc* desc)
     return id;
 }
 
+
+void destroy_texture(Renderer* r, TextureID id)
+{
+    if(!r || id == UINT32_MAX || id >= MAX_BINDLESS_TEXTURES)
+        return;
+
+    Texture* tex = &textures[id];
+    if(!tex->valid)
+        return;
+
+    if(tex->view != VK_NULL_HANDLE)
+        vkDestroyImageView(r->device, tex->view, r->allocatorcallbacks);
+
+    if(tex->image != VK_NULL_HANDLE)
+        vmaDestroyImage(r->vmaallocator, tex->image, tex->allocation);
+
+    memset(tex, 0, sizeof(*tex));
+    flow_id_pool_destroy_id(&texture_pool, id);
+}
+
 #define DDSKTX_IMPLEMENT
 
 #include "external/dds-ktx/dds-ktx.h"
@@ -3305,21 +3402,13 @@ TextureID load_texture(Renderer* r, const char* path)
         {
             ddsktx_sub_data sub;
             ddsktx_get_sub(&info, &sub, file_data, size, 0, 0, mip);
-
-            Buffer staging;
-            create_buffer(r, sub.size_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY, &staging);
-
-            memcpy(staging.mapping, sub.buff, sub.size_bytes);
-
-            VkBufferImageCopy region = {.bufferOffset                = 0,
-                                        .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                        .imageSubresource.mipLevel   = mip,
-                                        .imageSubresource.layerCount = 1,
-                                        .imageExtent                 = {sub.width, sub.height, 1}};
-
-            vkCmdCopyBufferToImage(cmd, staging.buffer, tex->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-            destroy_buffer(r, &staging);
+            if(!renderer_upload_texture_2d(r, cmd, tex, sub.buff, sub.size_bytes, sub.width, sub.height, (uint32_t)mip))
+            {
+                vk_end_one_time_cmd(r->device, r->graphics_queue, r->one_time_gfx_pool, cmd);
+                free(file_data);
+                destroy_texture(r, id);
+                return UINT32_MAX;
+            }
         }
 
         barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3359,12 +3448,6 @@ TextureID load_texture(Renderer* r, const char* path)
 
     VkDeviceSize image_size = w * h * 4;
 
-    Buffer staging;
-    create_buffer(r, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY, &staging);
-
-    memcpy(staging.mapping, pixels, image_size);
-
-    stbi_image_free(pixels);
     free(file_data);
 
     VkCommandBuffer cmd = vk_begin_one_time_cmd(r->device, r->one_time_gfx_pool);
@@ -3381,11 +3464,15 @@ TextureID load_texture(Renderer* r, const char* path)
 
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
 
-    VkBufferImageCopy region = {.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                .imageSubresource.layerCount = 1,
-                                .imageExtent                 = {w, h, 1}};
+    if(!renderer_upload_texture_2d(r, cmd, tex, pixels, image_size, (uint32_t)w, (uint32_t)h, 0))
+    {
+        stbi_image_free(pixels);
+        vk_end_one_time_cmd(r->device, r->graphics_queue, r->one_time_gfx_pool, cmd);
+        destroy_texture(r, id);
+        return UINT32_MAX;
+    }
 
-    vkCmdCopyBufferToImage(cmd, staging.buffer, tex->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    stbi_image_free(pixels);
 
     barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3395,8 +3482,6 @@ TextureID load_texture(Renderer* r, const char* path)
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
 
     vk_end_one_time_cmd(r->device, r->graphics_queue, r->one_time_gfx_pool, cmd);
-
-    destroy_buffer(r, &staging);
 
     return id;
 }
