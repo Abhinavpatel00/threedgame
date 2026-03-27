@@ -595,7 +595,24 @@ TextureID tex_id;
         uint32_t current_image = renderer.swapchain.current_image;
         TracyCZoneN(record_cmd_zone, "Record Command Buffer", 1);
         vk_cmd_begin(cmd, false);
+ 
+        if(!upload_once_done)
         {
+            upload_once_done = true;
+
+            {
+                VkBufferCopy copy = {.srcOffset = cpu_faces.offset,
+                                     .dstOffset = gpu_faces.offset,
+                                     .size      = voxel_face_count * sizeof(uint32_t)};
+
+                vkCmdCopyBuffer(cmd, cpu_faces.buffer, gpu_faces.buffer, 1, &copy);
+            }
+            {
+                renderer_upload_buffer_to_slice(&renderer, cmd, material_slice, gpu_materials, sizeof(gpu_materials), 16);
+            }
+        }       
+
+	{
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.bindless_system.pipeline_layout, 0,
                                     1, &renderer.bindless_system.set, 0, NULL);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, renderer.bindless_system.pipeline_layout, 0, 1,
@@ -608,33 +625,18 @@ TextureID tex_id;
 
             image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_GENERAL,
                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-            flush_barriers(cmd);
-        }
+        
 
-        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
-                                           .imageLayout =
-                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
-                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
-        VkRenderingAttachmentInfo depth = {
-            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
-            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue.depthStencil = {0.0f, 0},
-        };
+	    flush_barriers(cmd);
+        
 
-        VkRenderingInfo rendering = {
-            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea.extent    = renderer.swapchain.extent,
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &color,
-            .pDepthAttachment     = &depth,
-        };
+
+
+
+	}
+
+
+
 
 
         TracyCZoneN(imgui_zone, "ImGui CPU", 1);
@@ -689,21 +691,34 @@ TextureID tex_id;
         TracyCZoneEnd(imgui_zone);
 
 
-        if(!upload_once_done)
-        {
-            upload_once_done = true;
 
-            {
-                VkBufferCopy copy = {.srcOffset = cpu_faces.offset,
-                                     .dstOffset = gpu_faces.offset,
-                                     .size      = voxel_face_count * sizeof(uint32_t)};
 
-                vkCmdCopyBuffer(cmd, cpu_faces.buffer, gpu_faces.buffer, 1, &copy);
-            }
-            {
-                renderer_upload_buffer_to_slice(&renderer, cmd, material_slice, gpu_materials, sizeof(gpu_materials), 16);
-            }
-        }
+
+
+        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
+                                           .imageLayout =
+                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
+                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
+                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
+        VkRenderingAttachmentInfo depth = {
+            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
+            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue.depthStencil = {0.0f, 0},
+        };
+
+        VkRenderingInfo rendering = {
+            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea.extent    = renderer.swapchain.extent,
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &color,
+            .pDepthAttachment     = &depth,
+        };
 
         gpu_profiler_begin_frame(frame_prof, cmd);
         {
@@ -959,6 +974,13 @@ TextureID tex_id;
             vkCmdEndRendering(cmd);
         }
 
+
+
+
+
+smaapass();
+
+
         rt_transition_all(cmd, &renderer.ldr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                           VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
         image_transition_swapchain(renderer.frames[renderer.current_frame].cmdbuf, &renderer.swapchain,
@@ -1001,6 +1023,15 @@ TextureID tex_id;
             vkCmdEndRendering(cmd);
         }
 
+/*
+i just want to call functions here  
+
+geometrypass();
+smaapass();
+etc kind of stuff
+
+
+*/
 
         if(take_screenshot)
         {
