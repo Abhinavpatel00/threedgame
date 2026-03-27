@@ -1,4 +1,5 @@
 #include "external/debugbreak/debugbreak.h"
+#include "mu/mu.h"
 #include "tinytypes.h"
 #include "vk_default.h"
 #include "vk.h"
@@ -24,12 +25,6 @@ static bool voxel_debug     = true;
 static bool take_screenshot = true;
 static bool wireframe_mode  = false;
 #define VALIDATION false
-// imp gpu validation shows false positives may be bacause of data races
-/*
-only prolems in api design is i guess how to e pose the interface 
-how to decide lifetime and memory managent for efficient caching
-
-*/
 
 #define PRINT_FIELD(type, field)                                                                                       \
     printf("%-20s offset = %3zu  align = %2zu  size = %2zu\n", #field, offsetof(type, field),                          \
@@ -111,7 +106,7 @@ and also there should be save position to file option for that light so that    
 */
 
 
-static bool     upload_once_done = false;
+static bool upload_once_done = false;
 
 
 static const VoxelType terrain_voxels[] = {VOXEL_STONE, VOXEL_GRASS
@@ -210,13 +205,11 @@ void generate_chunk(Voxel* chunk)
 /* voxel part ends  */
 
 
-#include "renderer.h"   
-#include "renderer_pipelines.h"
-int main()
+#include "renderer.h"
+int main(void)
 {
-graphics_init();
-gfx_pipelines();
-	/* buffer slices start  */
+    graphics_init();
+    /* buffer slices start  */
 
     BufferSlice indirect_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(VkDrawIndirectCommand), 16);
 
@@ -294,34 +287,6 @@ gfx_pipelines();
 
     // number of draws
     *cpu_count = 1;
-#if 0
-#define MAX_LIGHT_BEAM 64
-    BufferSlice     light_beam = buffer_pool_alloc(&pool, MAX_LIGHT_BEAM * sizeof(LightBeam), 16);
-    LightBeam*      cpu_beams  = (LightBeam*)light_beam.mapped;
-    VkDeviceAddress beam_addr  = base_addr + light_beam.offset;
-
-
-    u32 beam_count = 64;
-    {
-        const float beam_width  = 1.75f;
-        const float beam_height = 14.0f;
-        const float beam_alpha  = 1.25f;
-
-        for(u32 i = 0; i < beam_count; ++i)
-        {
-            float x = 4.0f + (float)(i % 4) * 6.0f;
-            float z = 2.0f + (float)(i / 4) * 6.0f;
-
-            cpu_beams[i] = (LightBeam){
-                .pos_width  = {x, 9.0f, z, beam_width},
-                .sun_height = {0.12f, -1.0f, 0.08f, beam_height},
-                .misc       = {beam_alpha, 0.0f, 0.0f, 0.0f},
-            };
-        }
-    }
-#endif
-    /* device address */
-
     Camera cam = {
 
         .position   = {33.0f, 55.3f, 53.6f},
@@ -364,27 +329,6 @@ gfx_pipelines();
 
     );
 
-    PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint32_t sampler_id;
-
-                  uint32_t width;
-
-
-                  uint32_t height;
-
-                  uint frame
-
-                  ;
-
-                  float exposure;
-
-    );
-
-    PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr; uint64_t pad; float view_proj[4][4]; uint texture_id; uint sampler_id;
-
-    );
-
-    PUSH_CONSTANT(SkyPush, float inv_proj[4][4]; float basis_right[4]; float basis_up[4]; float basis_back[4];
-                  float time; float cirrus; float cumulus; float pad0;);
 
     dmon_init();
     dmon_watch("shaders", watch_cb, DMON_WATCHFLAGS_RECURSIVE, NULL);
@@ -392,8 +336,22 @@ gfx_pipelines();
     uint32_t pp_frame_counter = 0;
     while(!glfwWindowShouldClose(renderer.window))
     {
+//MU_SCOPE_TIMER("GAME")
+{
+// drawsprite funtion for 2d
 
 
+
+
+}
+
+
+
+
+
+
+//    MU_SCOPE_TIMER("GRAPHICS CPU")
+	    {
         TracyCFrameMark;
         TracyCZoneN(frame_loop_zone, "Frame Loop", 1);
 
@@ -416,7 +374,8 @@ gfx_pipelines();
         TracyCZoneN(streaming_zone, "Frame Loop", 1);
         if(!voxel_debug)
         {
-        }
+     
+	}
         TracyCZoneEnd(streaming_zone);
 
         VkCommandBuffer cmd        = renderer.frames[renderer.current_frame].cmdbuf;
@@ -440,31 +399,6 @@ gfx_pipelines();
                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
             flush_barriers(cmd);
         }
-
-        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
-                                           .imageLayout =
-                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
-                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
-        VkRenderingAttachmentInfo depth = {
-            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
-            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue.depthStencil = {0.0f, 0},
-        };
-
-        VkRenderingInfo rendering = {
-            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea.extent    = renderer.swapchain.extent,
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &color,
-            .pDepthAttachment     = &depth,
-        };
 
 
         TracyCZoneN(imgui_zone, "ImGui CPU", 1);
@@ -537,57 +471,39 @@ gfx_pipelines();
 
         gpu_profiler_begin_frame(frame_prof, cmd);
         {
-            vkCmdBeginRendering(cmd, &rendering);
+          
+        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
+                                           .imageLayout =
+                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
+                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
+                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
+        VkRenderingAttachmentInfo depth = {
+            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
+            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue.depthStencil = {0.0f, 0},
+        };
+
+        VkRenderingInfo rendering = {
+            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea.extent    = renderer.swapchain.extent,
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &color,
+            .pDepthAttachment     = &depth,
+        };
+
+
+		vkCmdBeginRendering(cmd, &rendering);
             GPU_SCOPE(frame_prof, cmd, "Main Pass", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
             {
 
 
-                // // ── Sky pass ──────────────────────────────────────────
-                // {
-                //     vec3 forward = {
-                //         cosf(cam.pitch) * sinf(cam.yaw),
-                //         sinf(cam.pitch),
-                //         -cosf(cam.pitch) * cosf(cam.yaw),
-                //     };
-                //     glm_vec3_normalize(forward);
-                //
-                //     vec3 world_up = {0.0f, 1.0f, 0.0f};
-                //     vec3 right    = {0.0f};
-                //     vec3 up       = {0.0f};
-                //     glm_vec3_cross(forward, world_up, right);
-                //     glm_vec3_normalize(right);
-                //     glm_vec3_cross(right, forward, up);
-                //
-                //     float aspect = (float)renderer.swapchain.extent.width / (float)renderer.swapchain.extent.height;
-                //     mat4  proj   = GLM_MAT4_IDENTITY_INIT;
-                //     mat4  inv_proj;
-                //     camera_build_proj_reverse_z_infinite(proj, &cam, aspect);
-                //     proj[1][1] *= -1.0f;
-                //     glm_mat4_inv(proj, inv_proj);
-                //
-                //     SkyPush sky_push = {0};
-                //     memcpy(sky_push.inv_proj, inv_proj, sizeof(sky_push.inv_proj));
-                //     sky_push.basis_right[0] = right[0];
-                //     sky_push.basis_right[1] = right[1];
-                //     sky_push.basis_right[2] = right[2];
-                //     sky_push.basis_up[0]    = up[0];
-                //     sky_push.basis_up[1]    = up[1];
-                //     sky_push.basis_up[2]    = up[2];
-                //     sky_push.basis_back[0]  = -forward[0];
-                //     sky_push.basis_back[1]  = -forward[1];
-                //     sky_push.basis_back[2]  = -forward[2];
-                //     sky_push.time           = (float)glfwGetTime() * 0.2f;
-                //     sky_push.cirrus         = 0.4f;
-                //     sky_push.cumulus        = 0.8f;
-                //
-                //     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.sky]);
-                //     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-                //     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0,
-                //                        sizeof(SkyPush), &sky_push);
-                //     vkCmdDraw(cmd, 4, 1, 0, 0);
-                // }
-
-                static int prev_space = GLFW_RELEASE;
+                           static int prev_space = GLFW_RELEASE;
 
                 int space = glfwGetKey(renderer.window, GLFW_KEY_SPACE);
 
@@ -632,24 +548,7 @@ gfx_pipelines();
                                        count_slice.offset, 1024, sizeof(VkDrawIndirectCommand));
             }
 
-            //
-            // {
-            //     Lightbeampush push = {0};
-            //     push.beam_ptr      = beam_addr;
-            //     glm_mat4_copy(cam.view_proj, push.view_proj);
-            //
-            //     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0,
-            //                        sizeof(Lightbeampush), &push);
-            //     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, render_pipelines.pipelines[pipelines.beam]);
-            //     //6 vertices × beam_count instances
-            //     vkCmdDraw(cmd,
-            //               6,           // vertices per quad
-            //               beam_count,  // instances
-            //               0, 0);
-            // }
-            //
-            // //
-            vkCmdEndRendering(cmd);
+               vkCmdEndRendering(cmd);
         }
 
 #include "passes.h"
@@ -683,7 +582,8 @@ gfx_pipelines();
         }
 
         TracyCZoneEnd(frame_loop_zone);
-    }
+	    }
+	    }
 
 
     printf(" renderer size is %zu", sizeof(Renderer));

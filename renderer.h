@@ -20,3 +20,7 @@ extern EnginePipelines pipelines;
 #define VALIDATION false
 
 void graphics_init(void);
+
+ void gfx_pipelines();
+
+
