@@ -100,6 +100,9 @@ FORCE_INLINE void gpu_profiler_destroy(GpuProfiler* p, VkDevice device)
 
 FORCE_INLINE void gpu_profiler_begin_frame(GpuProfiler* p, VkCommandBuffer cmd)
 {
+    if(!p || cmd == VK_NULL_HANDLE)
+        return;
+
     p->query_count = 0;
     p->pass_count  = 0;
 
@@ -111,6 +114,8 @@ FORCE_INLINE void gpu_profiler_begin_frame(GpuProfiler* p, VkCommandBuffer cmd)
 
 FORCE_INLINE void gpu_profiler_begin_pass(GpuProfiler* p, VkCommandBuffer cmd, const char* name, VkPipelineStageFlagBits2 stage)
 {
+
+
     uint32_t q = p->query_count++;
 
     GpuPass* pass = &p->passes[p->pass_count];
@@ -129,6 +134,8 @@ FORCE_INLINE void gpu_profiler_begin_pass(GpuProfiler* p, VkCommandBuffer cmd, c
 
 FORCE_INLINE void gpu_profiler_end_pass(GpuProfiler* p, VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage)
 {
+
+
     uint32_t q = p->query_count++;
 
     GpuPass* pass = &p->passes[p->pass_count];

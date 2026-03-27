@@ -111,19 +111,7 @@ and also there should be save position to file option for that light so that    
 */
 
 
-typedef struct
-{
-    uint32_t fullscreen;
-    uint32_t postprocess;
-    uint32_t triangle;
-    uint32_t triangle_wireframe;
-
-    uint32_t beam;
-    uint32_t sky;
-} EnginePipelines;
-
-static EnginePipelines pipelines;
-static bool            upload_once_done = false;
+static bool     upload_once_done = false;
 
 
 static const VoxelType terrain_voxels[] = {VOXEL_STONE, VOXEL_GRASS
@@ -221,163 +209,14 @@ void generate_chunk(Voxel* chunk)
 
 /* voxel part ends  */
 
-static Renderer renderer = {0};
 
+#include "renderer.h"   
+#include "renderer_pipelines.h"
 int main()
 {
-    VK_CHECK(volkInitialize());
-    if(!is_instance_extension_supported("VK_KHR_wayland_surface"))
-        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
-    else
-        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
-    glfwInit();
-    const char* dev_exts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME};
-
-    u32          glfw_ext_count = 0;
-    const char** glfw_exts      = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
-
-    RendererDesc desc = {
-        .app_name            = "My Renderer",
-        .instance_layers     = NULL,
-        .instance_extensions = glfw_exts,
-        .device_extensions   = dev_exts,
-
-        .instance_layer_count        = 0,
-        .instance_extension_count    = glfw_ext_count,
-        .device_extension_count      = 2,
-        .enable_gpu_based_validation = VALIDATION,
-        .enable_validation           = VALIDATION,
-
-        .validation_severity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT
-                               | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        .validation_types = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-                            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-        .width  = 1362,
-        .height = 749,
-
-        .swapchain_preferred_color_space = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
-        .swapchain_preferred_format      = VK_FORMAT_B8G8R8A8_SRGB,
-        .swapchain_extra_usage_flags     = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                                       | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,  // src for reading raw pixels
-        .vsync               = false,
-        .enable_debug_printf = false,  // Enable shader debug printf
-
-        .bindless_sampled_image_count     = 65536,
-        .bindless_sampler_count           = 256,
-        .bindless_storage_image_count     = 16384,
-        .enable_pipeline_stats            = false,
-        .swapchain_preferred_present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR,
-
-        .size_of_cpu_pool     = MB(32),
-        .size_of_gpu_pool     = MB(512),
-        .size_of_staging_pool = MB(128),
-
-    };
-    MU_SCOPE_TIMER("Renderer Creation")
-    {
-    renderer_create(&renderer, &desc);
-    }
-
-    MU_SCOPE_TIMER("Pipeline construction")
-    {
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/minimal_proc.vert.spv";
-            cfg.frag_path              = "compiledshaders/minimal_proc.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.hdr_color[1].format;
-            cfg.depth_test_enable      = false;
-            cfg.depth_write_enable     = false;
-            pipelines.fullscreen       = pipeline_create_graphics(&renderer, &cfg);
-        }
-        pipelines.postprocess = pipeline_create_compute(&renderer, "compiledshaders/postprocess.comp.spv");
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/triangle.vert.spv";
-            cfg.frag_path              = "compiledshaders/triangle.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.hdr_color[1].format;
-            cfg.depth_format           = renderer.depth[1].format;
-            cfg.polygon_mode           = VK_POLYGON_MODE_FILL;
-            cfg.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-            pipelines.triangle         = pipeline_create_graphics(&renderer, &cfg);
-        }
-        {
-            GraphicsPipelineConfig cfg   = pipeline_config_default();
-            cfg.vert_path                = "compiledshaders/triangle.vert.spv";
-            cfg.frag_path                = "compiledshaders/triangle.frag.spv";
-            cfg.color_attachment_count   = 1;
-            cfg.color_formats            = &renderer.hdr_color[1].format;
-            cfg.depth_format             = renderer.depth[1].format;
-            cfg.polygon_mode             = VK_POLYGON_MODE_LINE;
-            cfg.topology                 = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-            pipelines.triangle_wireframe = pipeline_create_graphics(&renderer, &cfg);
-        }
-
-        {
-
-            GraphicsPipelineConfig beam = pipeline_config_default();
-
-            beam.vert_path = "compiledshaders/light_beam.vert.spv";
-            beam.frag_path = "compiledshaders/light_beam.frag.spv";
-
-            beam.cull_mode              = VK_CULL_MODE_NONE;  // beams must be visible from both sides
-            beam.depth_test_enable      = true;               // prevents beams behind geometry
-            beam.depth_write_enable     = false;              // never write depth for transparent objects
-            beam.color_attachment_count = 1;
-            beam.color_formats          = &renderer.hdr_color[0].format;
-            beam.depth_format           = renderer.depth[1].format;
-            beam.blends[0]              = (ColorAttachmentBlend){.blend_enable = true,
-                                                                 .src_color    = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                 .dst_color    = VK_BLEND_FACTOR_ONE,
-                                                                 .color_op     = VK_BLEND_OP_ADD,
-                                                                 .src_alpha    = VK_BLEND_FACTOR_ONE,
-                                                                 .dst_alpha    = VK_BLEND_FACTOR_ONE,
-                                                                 .alpha_op     = VK_BLEND_OP_ADD,
-                                                                 .write_mask   = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                                                               | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
-
-            pipelines.beam = pipeline_create_graphics(&renderer, &beam);
-
-            // Blending
-            // Use additive blending.
-            //
-            // finalColor = beamColor * alpha + sceneColor
-            //
-            // That gives the glowing light effect.
-            //
-            // Typical blend setup:
-            //
-            // src = SRC_ALPHA
-            // dst = ONE
-            //
-            // Additive blending works better for light than standard alpha blending because light adds energy instead of blocking it.
-        }
-
-
-        // Sky pipeline – fullscreen quad, no depth test/write
-        {
-            GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/sky.vert.spv";
-            cfg.frag_path              = "compiledshaders/sky.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.hdr_color[1].format;
-            cfg.depth_format           = renderer.depth[1].format;
-            cfg.depth_test_enable      = false;
-            cfg.depth_write_enable     = false;
-            cfg.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-            pipelines.sky              = pipeline_create_graphics(&renderer, &cfg);
-        }
-    }
-
-TextureID tex_id;
-    MU_SCOPE_TIMER("texture Creation")
-    {
-        tex_id = load_texture(&renderer, "/home/lk/myprojects/mugame/data/PNG/Tiles/greystone.png");
-    }
-
-
-    /* buffer slices start  */
+graphics_init();
+gfx_pipelines();
+	/* buffer slices start  */
 
     BufferSlice indirect_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(VkDrawIndirectCommand), 16);
 
@@ -392,8 +231,7 @@ TextureID tex_id;
     static Voxel chunk[CHUNK_VOLUME];
 
     uint32_t* faces = NULL;
-    MU_SCOPE_TIMER("VOXEL Creation")
-    {
+
     generate_chunk(chunk);
     MU_FOR_3D(x, y, z, CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)
 
@@ -433,8 +271,6 @@ TextureID tex_id;
             }
         }
     }
-    }
-
 
     uint32_t    voxel_face_count = arrlen(faces);
     BufferSlice cpu_faces        = buffer_pool_alloc(&renderer.cpu_pool, voxel_face_count * sizeof(uint32_t), 4);
@@ -543,12 +379,6 @@ TextureID tex_id;
 
     );
 
-    PUSH_CONSTANT(EdgePush, uint32_t texture_id; uint32_t sampler_id;);
-
-
-    PUSH_CONSTANT(BlendPush, uint32_t color_tex; uint32_t weight_tex; uint32_t sampler_id; uint32_t pad;);
-
-    PUSH_CONSTANT(WeightPush, uint32_t edge_tex; uint32_t area_tex; uint32_t search_tex; uint32_t sampler_id;);
     PUSH_CONSTANT(Lightbeampush, VkDeviceAddress beam_ptr; uint64_t pad; float view_proj[4][4]; uint texture_id; uint sampler_id;
 
     );
@@ -595,24 +425,7 @@ TextureID tex_id;
         uint32_t current_image = renderer.swapchain.current_image;
         TracyCZoneN(record_cmd_zone, "Record Command Buffer", 1);
         vk_cmd_begin(cmd, false);
- 
-        if(!upload_once_done)
         {
-            upload_once_done = true;
-
-            {
-                VkBufferCopy copy = {.srcOffset = cpu_faces.offset,
-                                     .dstOffset = gpu_faces.offset,
-                                     .size      = voxel_face_count * sizeof(uint32_t)};
-
-                vkCmdCopyBuffer(cmd, cpu_faces.buffer, gpu_faces.buffer, 1, &copy);
-            }
-            {
-                renderer_upload_buffer_to_slice(&renderer, cmd, material_slice, gpu_materials, sizeof(gpu_materials), 16);
-            }
-        }       
-
-	{
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.bindless_system.pipeline_layout, 0,
                                     1, &renderer.bindless_system.set, 0, NULL);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, renderer.bindless_system.pipeline_layout, 0, 1,
@@ -625,18 +438,33 @@ TextureID tex_id;
 
             image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_GENERAL,
                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        
+            flush_barriers(cmd);
+        }
 
-	    flush_barriers(cmd);
-        
+        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
+                                           .imageLayout =
+                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
+                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
+                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
+        VkRenderingAttachmentInfo depth = {
+            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
+            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue.depthStencil = {0.0f, 0},
+        };
 
-
-
-
-	}
-
-
-
+        VkRenderingInfo rendering = {
+            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea.extent    = renderer.swapchain.extent,
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &color,
+            .pDepthAttachment     = &depth,
+        };
 
 
         TracyCZoneN(imgui_zone, "ImGui CPU", 1);
@@ -691,34 +519,21 @@ TextureID tex_id;
         TracyCZoneEnd(imgui_zone);
 
 
+        if(!upload_once_done)
+        {
+            upload_once_done = true;
 
+            {
+                VkBufferCopy copy = {.srcOffset = cpu_faces.offset,
+                                     .dstOffset = gpu_faces.offset,
+                                     .size      = voxel_face_count * sizeof(uint32_t)};
 
-
-
-        VkRenderingAttachmentInfo color = {.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                           .imageView = renderer.hdr_color[renderer.swapchain.current_image].view,
-                                           .imageLayout =
-                                               renderer.hdr_color[renderer.swapchain.current_image].mip_states[0].layout,
-                                           .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                           .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-                                           .clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
-        VkRenderingAttachmentInfo depth = {
-            .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView               = renderer.depth[renderer.swapchain.current_image].view,
-            .imageLayout             = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            .loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp                 = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue.depthStencil = {0.0f, 0},
-        };
-
-        VkRenderingInfo rendering = {
-            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea.extent    = renderer.swapchain.extent,
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &color,
-            .pDepthAttachment     = &depth,
-        };
+                vkCmdCopyBuffer(cmd, cpu_faces.buffer, gpu_faces.buffer, 1, &copy);
+            }
+            {
+                renderer_upload_buffer_to_slice(&renderer, cmd, material_slice, gpu_materials, sizeof(gpu_materials), 16);
+            }
+        }
 
         gpu_profiler_begin_frame(frame_prof, cmd);
         {
@@ -802,7 +617,7 @@ TextureID tex_id;
                 Push push = {0};
 
                 push.aspect     = (float)renderer.swapchain.extent.width / (float)renderer.swapchain.extent.height;
-                push.texture_id = tex_id;
+                push.texture_id = renderer.dummy_texture;
                 push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_WRAP_ANISO];
                 push.face_ptr   = face_pointer;
                 push.face_count = voxel_face_count;
@@ -837,201 +652,12 @@ TextureID tex_id;
             vkCmdEndRendering(cmd);
         }
 
+#include "passes.h"
+        post_pass();
+        pass_smaa();
+        pass_ldr_to_swapchain();
+        pass_imgui();
 
-        GPU_SCOPE(frame_prof, cmd, "POST", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
-        {
-            rt_transition_all(cmd, &renderer.hdr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_GENERAL,
-                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
-
-            flush_barriers(cmd);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.postprocess]);
-
-            PostPush pp_push        = {0};
-            pp_push.src_texture_id  = renderer.hdr_color[renderer.swapchain.current_image].bindless_index;
-            pp_push.output_image_id = renderer.ldr_color[renderer.swapchain.current_image].bindless_index;
-            pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-            pp_push.width           = renderer.swapchain.extent.width;
-            pp_push.height          = renderer.swapchain.extent.height;
-            pp_push.frame           = pp_frame_counter++;
-
-            pp_push.exposure = 1.2;
-            vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PostPush), &pp_push);
-
-            uint32_t gx = (pp_push.width + 15) / 16;
-            uint32_t gy = (pp_push.height + 15) / 16;
-
-
-            vkCmdDispatch(cmd, gx, gy, 1);
-        }
-
-        {
-            rt_transition_all(cmd, &renderer.smaa_edges[current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-            flush_barriers(cmd);
-            VkRenderingAttachmentInfo color = {.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                               .imageView        = renderer.smaa_edges[current_image].view,
-                                               .imageLayout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                               .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                               .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-                                               .clearValue.color = {{0, 0, 0, 0}}};
-
-            VkRenderingInfo rendering = {.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                                         .renderArea.extent    = renderer.swapchain.extent,
-                                         .layerCount           = 1,
-                                         .colorAttachmentCount = 1,
-                                         .pColorAttachments    = &color};
-
-            vkCmdBeginRendering(cmd, &rendering);
-
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_edge]);
-
-            vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-
-            EdgePush push   = {0};
-            push.texture_id = renderer.ldr_color[current_image].bindless_index;
-            push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-
-            vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(EdgePush), &push);
-
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-
-            vkCmdEndRendering(cmd);
-        }
-
-        {
-            rt_transition_all(cmd, &renderer.smaa_weights[current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-            rt_transition_all(cmd, &renderer.smaa_edges[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-            flush_barriers(cmd);
-            VkRenderingAttachmentInfo color = {.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                               .imageView        = renderer.smaa_weights[current_image].view,
-                                               .imageLayout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                               .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                                               .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-                                               .clearValue.color = {{0, 0, 0, 0}}};
-
-            VkRenderingInfo rendering = {.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                                         .renderArea.extent    = renderer.swapchain.extent,
-                                         .layerCount           = 1,
-                                         .colorAttachmentCount = 1,
-                                         .pColorAttachments    = &color};
-
-            vkCmdBeginRendering(cmd, &rendering);
-
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_weight]);
-
-
-            vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-            WeightPush push = {0};
-
-            push.edge_tex   = renderer.smaa_edges[current_image].bindless_index;
-            push.area_tex   = renderer.smaa_area_tex;
-            push.search_tex = renderer.smaa_search_tex;
-            push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-
-            vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(WeightPush), &push);
-
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-
-            vkCmdEndRendering(cmd);
-        }
-
-        rt_transition_all(cmd, &renderer.ldr_color[current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-        flush_barriers(cmd);
-
-        {
-            VkRenderingAttachmentInfo color = {.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                               .imageView   = renderer.ldr_color[current_image].view,
-                                               .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                               .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-                                               .storeOp     = VK_ATTACHMENT_STORE_OP_STORE};
-
-            VkRenderingInfo rendering = {.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                                         .renderArea.extent    = renderer.swapchain.extent,
-                                         .layerCount           = 1,
-                                         .colorAttachmentCount = 1,
-                                         .pColorAttachments    = &color};
-
-            vkCmdBeginRendering(cmd, &rendering);
-
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[renderer.smaa_pipelines.smaa_blend]);
-
-
-            vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-
-            BlendPush push  = {0};
-            push.color_tex  = renderer.ldr_color[current_image].bindless_index;
-            push.weight_tex = renderer.smaa_weights[current_image].bindless_index;
-            push.sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-
-            vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(BlendPush), &push);
-
-            vkCmdDraw(cmd, 3, 1, 0, 0);
-
-
-            vkCmdEndRendering(cmd);
-        }
-
-
-
-
-
-smaapass();
-
-
-        rt_transition_all(cmd, &renderer.ldr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-        image_transition_swapchain(renderer.frames[renderer.current_frame].cmdbuf, &renderer.swapchain,
-                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0);
-        flush_barriers(cmd);
-        VkImageBlit blit = {
-            .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-            .srcOffsets = {{0, 0, 0}, {renderer.swapchain.extent.width, renderer.swapchain.extent.height, 1}},
-
-            .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-            .dstOffsets = {{0, 0, 0}, {renderer.swapchain.extent.width, renderer.swapchain.extent.height, 1}}};
-
-        vkCmdBlitImage(cmd, renderer.ldr_color[renderer.swapchain.current_image].image,
-                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, renderer.swapchain.images[renderer.swapchain.current_image],
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
-
-
-        {
-            image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-
-            flush_barriers(cmd);
-            VkRenderingAttachmentInfo color = {.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                               .imageView   = renderer.swapchain.image_views[current_image],
-                                               .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                               .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
-                                               .storeOp     = VK_ATTACHMENT_STORE_OP_STORE};
-
-            VkRenderingInfo rendering = {.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                                         .renderArea.extent    = renderer.swapchain.extent,
-                                         .layerCount           = 1,
-                                         .colorAttachmentCount = 1,
-                                         .pColorAttachments    = &color};
-
-            vkCmdBeginRendering(cmd, &rendering);
-            {
-                ImDrawData* draw_data = igGetDrawData();
-                ImGui_ImplVulkan_RenderDrawData(draw_data, cmd, VK_NULL_HANDLE);
-            }
-            vkCmdEndRendering(cmd);
-        }
-
-/*
-i just want to call functions here  
-
-geometrypass();
-smaapass();
-etc kind of stuff
-
-
-*/
 
         if(take_screenshot)
         {
@@ -1063,7 +689,7 @@ etc kind of stuff
     printf(" renderer size is %zu", sizeof(Renderer));
     printf("Push size = %zu\n", sizeof(Push));
     printf("view_proj offset = %zu\n", offsetof(Push, view_proj));
-
+    //
     // PRINT_FIELD(Push, face_ptr);
     // PRINT_FIELD(Push, mat_ptr);
     // PRINT_FIELD(Push, face_count);
@@ -1075,7 +701,7 @@ etc kind of stuff
     // PRINT_FIELD(Push, view_proj);
     // PRINT_FIELD(Push, texture_id);
     // PRINT_FIELD(Push, sampler_id);
-    // //    ANALYZE_STRUCT(ImageState);
+    //    ANALYZE_STRUCT(ImageState);
     renderer_destroy(&renderer);
     return 0;
 }

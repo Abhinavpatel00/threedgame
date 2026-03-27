@@ -9,7 +9,8 @@ CXX := clang++
 # Sources
 # -----------------------------
 
-SRC_C := main.c ext.c vk.c helpers.c offset_allocator.c
+SRC_C := main.c ext.c vk.c helpers.c offset_allocator.c passes.c
+
 
 
 SRC_CPP := vma.cpp \
