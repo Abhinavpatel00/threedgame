@@ -274,6 +274,8 @@ static void draw_text_2d(const char* text, float x, float y, float scale, vec4 c
         if((glyph->x1 - glyph->x0) <= 0 || (glyph->y1 - glyph->y0) <= 0)
             continue;
 
+        const float atlas_w = (float)g_text_sys.atlas_width;
+        const float atlas_h = (float)g_text_sys.atlas_height;
         Sprite2D s = {
             .texture_id       = g_text_sys.atlas_texture,
             .position         = {(x0 + x1) * 0.5f, (y0 + y1) * 0.5f},
@@ -281,8 +283,7 @@ static void draw_text_2d(const char* text, float x, float y, float scale, vec4 c
             .rotation         = 0.0f,
             .tint_color       = {color[0], color[1], color[2], color[3]},
             .depth            = depth,
-            .uv_rect          = {glyph->x0 / (float)g_text_sys.atlas_width, glyph->y1 / (float)g_text_sys.atlas_height,
-                                 glyph->x1 / (float)g_text_sys.atlas_width, glyph->y0 / (float)g_text_sys.atlas_height},
+            .uv_rect          = {glyph->x0 / atlas_w, glyph->y1 / atlas_h, glyph->x1 / atlas_w, glyph->y0 / atlas_h},
             .transform_offset = 0,
             .dirty            = false,
         };
