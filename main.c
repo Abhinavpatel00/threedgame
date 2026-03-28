@@ -84,6 +84,14 @@ typedef struct GPU_Quad2D
     vec4 tint;
 } GPU_Quad2D;
 
+typedef struct SpritePushConstants
+{
+    VkDeviceAddress instance_ptr;
+    vec2            screen_size;
+    uint32_t        sampler_id;
+    uint32_t        _pad;
+} SpritePushConstants;
+
 
 typedef struct Camera2D
 {
@@ -138,13 +146,13 @@ void draw_sprite(Sprite2D* s)
     GPU_Quad2D* q = &g_sprite_sys.instances[id];
 
     glm_vec2_copy(s->position, q->position);
-    q->scale      = s->scale;
+    glm_vec2_copy(s->scale, q->scale);
     q->rotation   = s->rotation;
     q->depth      = s->depth;
     q->texture_id = s->texture_id;
-    q->uv_rect    = s->uv_rect;
-    q->tint       = s->tint_color;
-    q->opacity    = s->tint_color.w;
+    glm_vec4_copy(s->uv_rect, q->uv_rect);
+    glm_vec4_copy(s->tint_color, q->tint);
+    q->opacity = s->tint_color[3];
 }
 void build_indirect_commands_2d()
 {
@@ -194,7 +202,21 @@ void render_sprites(VkCommandBuffer cmd)
 
     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
 
-sprite_push_constant here 
+    VkBufferDeviceAddressInfo addr_info = {
+        .sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = g_sprite_sys.instance_buffer.buffer,
+    };
+
+    SpritePushConstants sprite_push = {
+        .instance_ptr = vkGetBufferDeviceAddress(renderer.device, &addr_info) + g_sprite_sys.instance_buffer.offset,
+        .screen_size  = {(float)renderer.swapchain.extent.width, (float)renderer.swapchain.extent.height},
+        .sampler_id   = renderer.default_samplers.samplers[SAMPLER_LINEAR_WRAP_ANISO],
+        ._pad         = 0,
+    };
+
+    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(SpritePushConstants),
+                       &sprite_push);
+
     vkCmdDrawIndirectCount(
         cmd,
         g_sprite_sys.indirect_buffer.buffer,
@@ -209,6 +231,32 @@ sprite_push_constant here
 int main(void)
 {
     graphics_init();
+    sprite_indirect_init();
+
+    TextureID sprite_sheet_texture = load_texture(&renderer, "data/Spritesheets/spritesheet_tiles.png");
+    if(sprite_sheet_texture == UINT32_MAX)
+    {
+        fprintf(stderr, "Failed to load sprite sheet data/Spritesheets/spritesheet_tiles.png\n");
+        renderer_destroy(&renderer);
+        return 1;
+    }
+
+    Texture* sprite_sheet = &textures[sprite_sheet_texture];
+
+    const float atlas_w = (float)sprite_sheet->width;
+    const float atlas_h = (float)sprite_sheet->height;
+
+    Sprite2D brick_sprite = {
+        .texture_id = sprite_sheet_texture,
+        .position   = {260.0f, 260.0f},
+        .scale      = {128.0f, 128.0f},
+        .rotation   = 0.0f,
+        .tint_color = {1.0f, 1.0f, 1.0f, 1.0f},
+        .depth      = 0.0f,
+        .uv_rect    = {512.0f / atlas_w, 256.0f / atlas_h, 640.0f / atlas_w, 384.0f / atlas_h},
+        .transform_offset = 0,
+        .dirty            = true,
+    };
 
     /* buffer slices start  */
 
@@ -341,7 +389,8 @@ int main(void)
     {
         //MU_SCOPE_TIMER("GAME")
         {
-            // drawsprite funtion for 2d
+            g_sprite_sys.instance_count = 0;
+            draw_sprite(&brick_sprite);
         }
 
 
@@ -541,6 +590,8 @@ int main(void)
                 //                 }
                 //
                 //                 vkCmdEndRendering(cmd);
+                render_sprites(cmd);
+                vkCmdEndRendering(cmd);
             }
             //
 #include "passes.h"

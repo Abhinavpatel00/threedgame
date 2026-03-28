@@ -96,6 +96,28 @@ void gfx_pipelines()
             pipelines.triangle         = pipeline_create_graphics(&renderer, &cfg);
         }
         {
+            GraphicsPipelineConfig cfg = pipeline_config_default();
+            cfg.vert_path              = "compiledshaders/sprite.vert.spv";
+            cfg.frag_path              = "compiledshaders/sprite.frag.spv";
+            cfg.color_attachment_count = 1;
+            cfg.color_formats          = &renderer.hdr_color[1].format;
+            cfg.depth_format           = renderer.depth[1].format;
+            cfg.depth_test_enable      = false;
+            cfg.depth_write_enable     = false;
+            cfg.cull_mode              = VK_CULL_MODE_NONE;
+            cfg.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            cfg.blends[0]              = (ColorAttachmentBlend){.blend_enable = true,
+                                                                 .src_color    = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                 .dst_color    = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                 .color_op     = VK_BLEND_OP_ADD,
+                                                                 .src_alpha    = VK_BLEND_FACTOR_ONE,
+                                                                 .dst_alpha    = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                 .alpha_op     = VK_BLEND_OP_ADD,
+                                                                 .write_mask   = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                                                               | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+            pipelines.sprite           = pipeline_create_graphics(&renderer, &cfg);
+        }
+        {
             GraphicsPipelineConfig cfg   = pipeline_config_default();
             cfg.vert_path                = "compiledshaders/triangle.vert.spv";
             cfg.frag_path                = "compiledshaders/triangle.frag.spv";
