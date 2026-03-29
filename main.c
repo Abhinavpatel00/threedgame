@@ -101,11 +101,7 @@ typedef struct GPU_Quad2D
     // Color tint
     vec4 tint;
 } GPU_Quad2D;
-PUSH_CONSTANT(SpritePushConstants,
-              VkDeviceAddress instance_ptr;
-              vec2            screen_size;
-              uint32_t        sampler_id;
-              float           view_proj[4][4];
+PUSH_CONSTANT(SpritePushConstants, VkDeviceAddress instance_ptr; vec2 screen_size; uint32_t sampler_id; float view_proj[4][4];
 
 );
 
@@ -217,7 +213,7 @@ void sprite_end(SpriteRenderer* r, VkCommandBuffer cmd);
 
 // rendering
 
-void sprite_render(SpriteRenderer* r, VkCommandBuffer cmd,Camera2D* cam);
+void sprite_render(SpriteRenderer* r, VkCommandBuffer cmd, const Camera* cam);
 void sprite_renderer_init(SpriteRenderer* r, uint32_t max_sprites)
 {
     r->capacity = max_sprites;
@@ -370,7 +366,7 @@ void sprite_end(SpriteRenderer* r, VkCommandBuffer cmd)
     */
     *(uint32_t*)r->count_buffer.mapped = r->draw_count;
 }
-void sprite_render(SpriteRenderer* r, VkCommandBuffer cmd,Camera2D* cam)
+void sprite_render(SpriteRenderer* r, VkCommandBuffer cmd, const Camera* cam)
 {
     if(r->draw_count == 0)
         return;
@@ -387,7 +383,7 @@ void sprite_render(SpriteRenderer* r, VkCommandBuffer cmd,Camera2D* cam)
         .sampler_id = renderer.default_samplers.samplers[SAMPLER_LINEAR_WRAP_ANISO],
     };
 
-glm_mat4_copy(cam->view_projection, push.view_proj);
+    glm_mat4_ucopy(cam->view_proj, push.view_proj);
     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(SpritePushConstants), &push);
     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.sprite]);
@@ -445,6 +441,23 @@ static void update_sprite_movement(Sprite2D* s, float speed)
 int main(void)
 {
     graphics_init();
+
+    const CameraMode app_camera_mode = CAMERA_MODE_2D;
+
+    Camera cam = {0};
+    if(app_camera_mode == CAMERA_MODE_2D)
+    {
+        camera_defaults_2d(&cam, renderer.swapchain.extent.width, renderer.swapchain.extent.height);
+        cam.ortho_height_world = (float)renderer.swapchain.extent.height;
+        cam.zoom               = 1.0f;
+        camera2d_set_position(&cam, (float)renderer.swapchain.extent.width * 0.5f, (float)renderer.swapchain.extent.height * 0.5f);
+    }
+    else
+    {
+        camera_defaults_3d(&cam);
+        camera3d_set_position(&cam, 11.0f, 3.3f, 8.6f);
+        camera3d_set_rotation_yaw_pitch(&cam, glm_rad(5.7f), glm_rad(0.0f));
+    }
 
     SpriteRenderer sprites;
 
@@ -514,8 +527,11 @@ int main(void)
             text_system_begin_frame();
             sprite_begin(&sprites);
             update_sprite_movement(&brick_sprite, 233.00);
-            entities[0]  = brick_sprite;
-            entity_count = 1;
+            entities[0]     = brick_sprite;
+            entity_count    = 1;
+            cam.position[0] = brick_sprite.position[0] - cam.viewport_width * 0.5f;
+            cam.position[1] = brick_sprite.position[1] - cam.viewport_height * 0.5f;
+
             for(int i = 0; i < entity_count; i++)
             {
                 update_sprite_movement(&entities[i], 200.0f);
@@ -674,7 +690,7 @@ int main(void)
 
                 //     MU_SCOPE_TIMER("SP and TE CPU")
                 {
-                    sprite_render(&sprites, cmd);
+                    sprite_render(&sprites, cmd, &cam);
                     text_system_render(cmd);
                 }
                 vkCmdEndRendering(cmd);

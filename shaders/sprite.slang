@@ -3,7 +3,7 @@ struct Push
     uint64_t instance_ptr;
     float2   screen_size;
     uint     sampler_id;
-    uint     pad0;
+    float4x4 view_proj;
 };
 
 struct VSOutput
@@ -68,11 +68,8 @@ VSOutput vs_main(uint vertexID : SV_VertexID,
 
     float2 world = position + rotated;
 
-    float2 ndc;
-    ndc.x = (world.x / push.screen_size.x) * 2.0 - 1.0;
-    ndc.y = 1.0 - (world.y / push.screen_size.y) * 2.0;
-
-    output.position = float4(ndc, depth, 1.0);
+float4 world_pos = float4(world, depth, 1.0);
+output.position = mul(push.view_proj, world_pos);
     output.uv = lerp(uv_rect.xy, uv_rect.zw, local_uv);
     output.tint = tint;
     output.opacity = opacity;
