@@ -20,7 +20,7 @@ typedef struct
 
 extern EnginePipelines pipelines;
 
-#define VALIDATION false
+#define VALIDATION false 
 
 void graphics_init(void);
 

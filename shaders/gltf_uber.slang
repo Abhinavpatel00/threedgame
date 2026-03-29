@@ -1,21 +1,26 @@
 struct Push
 {
+    uint64_t draw_data_ptr;
+    uint64_t skin_mats_ptr;
+    uint64_t mat_ptr;
+    uint _pad0;
+
+    float4x4 view_proj;
+};
+
+struct DrawData
+{
     uint64_t pos_ptr;
     uint64_t idx_ptr;
     uint64_t nrm_ptr;
     uint64_t uv_ptr;
     uint64_t joints_ptr;
     uint64_t weights_ptr;
-    uint64_t skin_mats_ptr;
-    uint64_t mat_ptr;
-
     float4x4 model;
-    float4x4 view_proj;
-
     uint material_id;
     uint skin_offset;
     uint flags;
-    uint index_count;
+    uint _pad0;
 };
 
 struct GPUMaterial
@@ -53,12 +58,15 @@ SamplerState samplers[];
 Push push;
 
 [shader("vertex")]
-VSOutput vs_main(uint vertexID : SV_VertexID)
+VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 {
     VSOutput o;
 
-    uint* indices = (uint*)push.idx_ptr;
-    float* positions = (float*)push.pos_ptr;
+    DrawData* draws = (DrawData*)push.draw_data_ptr;
+    DrawData draw = draws[drawID];
+
+    uint* indices = (uint*)draw.idx_ptr;
+    float* positions = (float*)draw.pos_ptr;
 
     uint idx = indices[vertexID];
 
@@ -69,9 +77,9 @@ VSOutput vs_main(uint vertexID : SV_VertexID)
     );
 
     float3 n = float3(0.0, 1.0, 0.0);
-    if((push.flags & 0x2) != 0)
+    if((draw.flags & 0x2) != 0)
     {
-        float* normals = (float*)push.nrm_ptr;
+        float* normals = (float*)draw.nrm_ptr;
         n = float3(
             normals[idx * 3 + 0],
             normals[idx * 3 + 1],
@@ -80,22 +88,22 @@ VSOutput vs_main(uint vertexID : SV_VertexID)
     }
 
     float2 uv = float2(0.0, 0.0);
-    if((push.flags & 0x1) != 0)
+    if((draw.flags & 0x1) != 0)
     {
-        float* uvs = (float*)push.uv_ptr;
+        float* uvs = (float*)draw.uv_ptr;
         uv = float2(
             uvs[idx * 2 + 0],
             uvs[idx * 2 + 1]
         );
     }
 
-    float4 world = mul(push.model, float4(p, 1.0));
+    float4 world = mul(draw.model, float4(p, 1.0));
     float3 world_n = n;
 
-    if((push.flags & 0x4) != 0)
+    if((draw.flags & 0x4) != 0)
     {
-        float* joints_f = (float*)push.joints_ptr;
-        float* weights = (float*)push.weights_ptr;
+        float* joints_f = (float*)draw.joints_ptr;
+        float* weights = (float*)draw.weights_ptr;
         float4x4* skin_mats = (float4x4*)push.skin_mats_ptr;
 
         uint4 j = uint4(
@@ -115,7 +123,7 @@ VSOutput vs_main(uint vertexID : SV_VertexID)
         float wsum = max(dot(w, 1.0), 1e-6);
         w /= wsum;
 
-        uint base = push.skin_offset;
+        uint base = draw.skin_offset;
         float4 skinned_pos =
             mul(skin_mats[base + j.x], float4(p, 1.0)) * w.x +
             mul(skin_mats[base + j.y], float4(p, 1.0)) * w.y +
@@ -128,17 +136,17 @@ VSOutput vs_main(uint vertexID : SV_VertexID)
             mul((float3x3)skin_mats[base + j.z], n) * w.z +
             mul((float3x3)skin_mats[base + j.w], n) * w.w;
 
-        world = mul(push.model, skinned_pos);
-        world_n = normalize(mul((float3x3)push.model, skinned_nrm));
+        world = mul(draw.model, skinned_pos);
+        world_n = normalize(mul((float3x3)draw.model, skinned_nrm));
     }
 
-    float3x3 nrm_mat = (float3x3)push.model;
+    float3x3 nrm_mat = (float3x3)draw.model;
 
     o.position = mul(push.view_proj, world);
     o.world_pos = world.xyz;
-    o.normal = ((push.flags & 0x4) != 0) ? world_n : normalize(mul(nrm_mat, n));
+    o.normal = ((draw.flags & 0x4) != 0) ? world_n : normalize(mul(nrm_mat, n));
     o.uv = uv;
-    o.material_id = push.material_id;
+    o.material_id = draw.material_id;
 
     return o;
 }
@@ -172,18 +180,21 @@ float4 fs_main(VSOutput i) : SV_Target0
     float rough = clamp(mat.roughness_factor, 0.04, 1.0);
     float metal = clamp(mat.metallic_factor, 0.0, 1.0);
 
-    float diffuse_term = ndotl;
+    float diffuse_term = ndotl * 0.5 + 0.5;
     float spec_power = lerp(64.0, 4.0, rough);
     float spec = pow(ndoth, spec_power) * ndotl;
+    float ambient = 0.14;
 
     float3 albedo = base_color.rgb;
-    float3 diffuse = albedo * (1.0 - metal) * diffuse_term;
+    float3 diffuse = albedo * (1.0 - metal) * (diffuse_term + ambient);
     float3 specular = lerp(float3(0.04, 0.04, 0.04), albedo, metal) * spec;
+    float hemi = normal.y * 0.5 + 0.5;
+    float3 fill = albedo * lerp(0.12, 0.28, hemi);
 
     float3 emissive = mat.emissive_factor;
     if(mat.emissive_tex != 0xFFFFFFFF)
         emissive *= textures[mat.emissive_tex].Sample(samp, i.uv).rgb;
 
-    float3 color = diffuse + specular + emissive;
+    float3 color = diffuse + specular + fill + emissive;
     return float4(color, base_color.a);
 }

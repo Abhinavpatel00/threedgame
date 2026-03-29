@@ -5,28 +5,33 @@
 #include <dirent.h>
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define GLTF_MODEL_DIR "assets/blocky/Models/GLB format"
+#define GLTF_MODEL_DIR "assets/cubepets/Models/GLB format"
 #define GRID_COLUMNS 5u
 #define GRID_SPACING_X 2.6f
 #define GRID_SPACING_Z 2.6f
+static bool take_screenshot;
+PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;
+              float view_proj[4][4];);
 
-PUSH_CONSTANT(GltfUberPush, VkDeviceAddress pos_ptr; VkDeviceAddress idx_ptr; VkDeviceAddress nrm_ptr; VkDeviceAddress uv_ptr;
-              VkDeviceAddress joints_ptr;
-              VkDeviceAddress weights_ptr;
-              VkDeviceAddress skin_mats_ptr;
-              VkDeviceAddress mat_ptr;
-
-              float model[4][4];
-              float view_proj[4][4];
-
-              uint32_t material_id;
-              uint32_t skin_offset;
-              uint32_t flags;
-              uint32_t index_count;);
+typedef struct GltfIndirectDrawData
+{
+    VkDeviceAddress pos_ptr;
+    VkDeviceAddress idx_ptr;
+    VkDeviceAddress nrm_ptr;
+    VkDeviceAddress uv_ptr;
+    VkDeviceAddress joints_ptr;
+    VkDeviceAddress weights_ptr;
+    float           model[4][4];
+    uint32_t        material_id;
+    uint32_t        skin_offset;
+    uint32_t        flags;
+    uint32_t        _pad0;
+} GltfIndirectDrawData;
 
 typedef struct GltfGpuMesh
 {
@@ -77,6 +82,12 @@ typedef struct GltfGpuModel
     mat4*       skin_mats_cpu;
     BufferSlice skin_mats_slice;
 
+    GltfIndirectDrawData*  draw_data_cpu;
+    VkDrawIndirectCommand* indirect_cmds_cpu;
+    BufferSlice            draw_data_slice;
+    BufferSlice            indirect_cmd_slice;
+    BufferSlice            indirect_count_slice;
+
     bool uploaded;
 } GltfGpuModel;
 
@@ -120,8 +131,8 @@ static bool collect_glb_paths(const char* dir_path, char*** out_paths, uint32_t*
         return false;
 
     uint32_t count = 0;
-    uint32_t cap = 16;
-    char** paths = (char**)calloc(cap, sizeof(char*));
+    uint32_t cap   = 16;
+    char**   paths = (char**)calloc(cap, sizeof(char*));
     if(!paths)
     {
         closedir(dir);
@@ -150,7 +161,7 @@ static bool collect_glb_paths(const char* dir_path, char*** out_paths, uint32_t*
         }
 
         size_t full_len = strlen(dir_path) + 1 + strlen(entry->d_name) + 1;
-        paths[count] = (char*)malloc(full_len);
+        paths[count]    = (char*)malloc(full_len);
         if(!paths[count])
         {
             for(uint32_t i = 0; i < count; ++i)
@@ -195,7 +206,7 @@ static void cycle_animation_clip(GltfSceneInstance* instance, int delta)
         next_index -= (int)count;
 
     instance->animation_index = (uint32_t)next_index;
-    instance->animation_time = 0.0f;
+    instance->animation_time  = 0.0f;
 }
 
 static void update_animation_time(GltfSceneInstance* instance, float delta_seconds)
@@ -423,10 +434,13 @@ static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
     if(model->cpu->skin_count > 0)
         model->skin_offsets = (uint32_t*)calloc(model->cpu->skin_count, sizeof(uint32_t));
 
+    model->draw_data_cpu     = (GltfIndirectDrawData*)calloc(model->cpu->mesh_count, sizeof(GltfIndirectDrawData));
+    model->indirect_cmds_cpu = (VkDrawIndirectCommand*)calloc(model->cpu->mesh_count, sizeof(VkDrawIndirectCommand));
+
     if(!model->gpu_meshes || !model->node_world_matrices || !model->material_data
        || (model->cpu->sampler_count > 0 && !model->sampler_map)
        || (model->cpu->handle && model->cpu->handle->images_count > 0 && !model->image_map)
-       || (model->cpu->skin_count > 0 && !model->skin_offsets))
+       || (model->cpu->skin_count > 0 && !model->skin_offsets) || !model->draw_data_cpu || !model->indirect_cmds_cpu)
         return false;
 
     for(uint32_t i = 0; i < model->cpu->node_count; ++i)
@@ -528,6 +542,28 @@ static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
     if(model->material_slice.buffer == VK_NULL_HANDLE)
         return false;
 
+    model->draw_data_slice =
+        buffer_pool_alloc(&renderer.gpu_pool, (VkDeviceSize)model->cpu->mesh_count * sizeof(GltfIndirectDrawData), 16);
+    if(model->draw_data_slice.buffer == VK_NULL_HANDLE)
+        return false;
+
+    model->indirect_cmd_slice =
+        buffer_pool_alloc(&renderer.gpu_pool, (VkDeviceSize)model->cpu->mesh_count * sizeof(VkDrawIndirectCommand), 16);
+    if(model->indirect_cmd_slice.buffer == VK_NULL_HANDLE)
+        return false;
+
+    model->indirect_count_slice = buffer_pool_alloc(&renderer.gpu_pool, sizeof(uint32_t), 4);
+    if(model->indirect_count_slice.buffer == VK_NULL_HANDLE)
+        return false;
+
+    for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
+    {
+        model->indirect_cmds_cpu[i].vertexCount   = model->cpu->meshes[i].index_count;
+        model->indirect_cmds_cpu[i].instanceCount = 1;
+        model->indirect_cmds_cpu[i].firstVertex   = 0;
+        model->indirect_cmds_cpu[i].firstInstance = i;
+    }
+
     model->total_skin_mats = 0;
     for(uint32_t s = 0; s < model->cpu->skin_count; ++s)
     {
@@ -576,6 +612,15 @@ static void gltf_gpu_model_destroy(GltfGpuModel* model)
     if(model->material_slice.buffer != VK_NULL_HANDLE)
         buffer_pool_free(model->material_slice);
 
+    if(model->draw_data_slice.buffer != VK_NULL_HANDLE)
+        buffer_pool_free(model->draw_data_slice);
+
+    if(model->indirect_cmd_slice.buffer != VK_NULL_HANDLE)
+        buffer_pool_free(model->indirect_cmd_slice);
+
+    if(model->indirect_count_slice.buffer != VK_NULL_HANDLE)
+        buffer_pool_free(model->indirect_count_slice);
+
     if(model->skin_mats_slice.buffer != VK_NULL_HANDLE)
         buffer_pool_free(model->skin_mats_slice);
 
@@ -606,6 +651,8 @@ static void gltf_gpu_model_destroy(GltfGpuModel* model)
     free(model->node_world_matrices);
     free(model->skin_offsets);
     free(model->skin_mats_cpu);
+    free(model->draw_data_cpu);
+    free(model->indirect_cmds_cpu);
     freeGltf(model->cpu);
     memset(model, 0, sizeof(*model));
 }
@@ -615,7 +662,7 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
     if(model->uploaded)
         return;
 
-    uint32_t barrier_capacity = model->cpu->mesh_count * 8u + 2u;
+    uint32_t barrier_capacity = model->cpu->mesh_count * 8u + 5u;
     VkBufferMemoryBarrier2* barriers = (VkBufferMemoryBarrier2*)calloc(barrier_capacity, sizeof(VkBufferMemoryBarrier2));
     if(!barriers)
         return;
@@ -739,6 +786,40 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
         };
     }
 
+    if(model->indirect_cmd_slice.buffer != VK_NULL_HANDLE)
+    {
+        VkDeviceSize cmd_bytes = (VkDeviceSize)model->cpu->mesh_count * sizeof(VkDrawIndirectCommand);
+        renderer_upload_buffer_to_slice(&renderer, cmd, model->indirect_cmd_slice, model->indirect_cmds_cpu, cmd_bytes, 16);
+
+        barriers[b++] = (VkBufferMemoryBarrier2){
+            .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+            .dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+            .buffer        = model->indirect_cmd_slice.buffer,
+            .offset        = model->indirect_cmd_slice.offset,
+            .size          = cmd_bytes,
+        };
+    }
+
+    if(model->indirect_count_slice.buffer != VK_NULL_HANDLE)
+    {
+        uint32_t draw_count = model->cpu->mesh_count;
+        renderer_upload_buffer_to_slice(&renderer, cmd, model->indirect_count_slice, &draw_count, sizeof(draw_count), 4);
+
+        barriers[b++] = (VkBufferMemoryBarrier2){
+            .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+            .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .dstStageMask  = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+            .dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT,
+            .buffer        = model->indirect_count_slice.buffer,
+            .offset        = model->indirect_count_slice.offset,
+            .size          = sizeof(uint32_t),
+        };
+    }
+
     VkDependencyInfo dep = {
         .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .bufferMemoryBarrierCount = b,
@@ -805,50 +886,47 @@ static void gltf_gpu_model_update_skinning(GltfSceneInstance* instance, VkComman
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
-static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGpuModel* model, vec3 world_position)
+static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkCommandBuffer cmd)
 {
-    vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.gltf_minimal]);
+    GltfGpuModel* model = &instance->model;
+
+    if(model->cpu->mesh_count == 0 || model->draw_data_slice.buffer == VK_NULL_HANDLE || !model->draw_data_cpu)
+        return;
 
     mat4 instance_transform;
     glm_mat4_identity(instance_transform);
-    glm_translate(instance_transform, world_position);
+    glm_translate(instance_transform, instance->position);
 
     for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
     {
-        GltfUberPush push     = {0};
-        GLTFMesh*    mesh     = &model->cpu->meshes[i];
-        GltfGpuMesh* gpu_mesh = &model->gpu_meshes[i];
+        GltfIndirectDrawData* draw     = &model->draw_data_cpu[i];
+        GLTFMesh*             mesh     = &model->cpu->meshes[i];
+        GltfGpuMesh*          gpu_mesh = &model->gpu_meshes[i];
 
-        push.pos_ptr       = slice_device_address(&renderer, gpu_mesh->position_slice);
-        push.idx_ptr       = slice_device_address(&renderer, gpu_mesh->index_slice);
-        push.nrm_ptr       = gpu_mesh->has_normal ? slice_device_address(&renderer, gpu_mesh->normal_slice) : 0;
-        push.uv_ptr        = gpu_mesh->has_uv ? slice_device_address(&renderer, gpu_mesh->uv_slice) : 0;
-        push.joints_ptr    = 0;
-        push.weights_ptr   = 0;
-        push.skin_mats_ptr = 0;
-        push.mat_ptr       = slice_device_address(&renderer, model->material_slice);
-        push.index_count   = mesh->index_count;
-        push.material_id   = 0;
-        push.skin_offset   = 0;
+        draw->pos_ptr     = slice_device_address(&renderer, gpu_mesh->position_slice);
+        draw->idx_ptr     = slice_device_address(&renderer, gpu_mesh->index_slice);
+        draw->nrm_ptr     = gpu_mesh->has_normal ? slice_device_address(&renderer, gpu_mesh->normal_slice) : 0;
+        draw->uv_ptr      = gpu_mesh->has_uv ? slice_device_address(&renderer, gpu_mesh->uv_slice) : 0;
+        draw->joints_ptr  = 0;
+        draw->weights_ptr = 0;
+        draw->material_id = 0;
+        draw->skin_offset = 0;
 
-        push.flags = 0;
+        draw->flags = 0;
         if(gpu_mesh->has_uv)
-            push.flags |= 0x1;
+            draw->flags |= 0x1;
         if(gpu_mesh->has_normal)
-            push.flags |= 0x2;
+            draw->flags |= 0x2;
 
         u32 node_index = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
-            glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], push.model);
+            glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], draw->model);
         else
-            memcpy(push.model, instance_transform, sizeof(push.model));
-
-        memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
+            memcpy(draw->model, instance_transform, sizeof(draw->model));
 
         u32 material_index = model->cpu->material_indices ? model->cpu->material_indices[i] : UINT_MAX;
         if(material_index != UINT_MAX && material_index < model->cpu->material_count)
-            push.material_id = material_index + 1u;
+            draw->material_id = material_index + 1u;
 
         u32 skin_index = UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
@@ -856,16 +934,59 @@ static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGp
 
         if(gpu_mesh->has_skin && skin_index != UINT_MAX && skin_index < model->cpu->skin_count && model->skin_offsets)
         {
-            push.flags |= 0x4;
-            push.joints_ptr    = slice_device_address(&renderer, gpu_mesh->joints_slice);
-            push.weights_ptr   = slice_device_address(&renderer, gpu_mesh->weights_slice);
-            push.skin_mats_ptr = slice_device_address(&renderer, model->skin_mats_slice);
-            push.skin_offset   = model->skin_offsets[skin_index];
+            draw->flags |= 0x4;
+            draw->joints_ptr  = slice_device_address(&renderer, gpu_mesh->joints_slice);
+            draw->weights_ptr = slice_device_address(&renderer, gpu_mesh->weights_slice);
+            draw->skin_offset = model->skin_offsets[skin_index];
         }
 
-        vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfUberPush), &push);
-        vkCmdDraw(cmd, push.index_count, 1, 0, 0);
+        model->indirect_cmds_cpu[i].vertexCount = mesh->index_count;
     }
+
+    VkDeviceSize draw_data_bytes = (VkDeviceSize)model->cpu->mesh_count * sizeof(GltfIndirectDrawData);
+    renderer_upload_buffer_to_slice(&renderer, cmd, model->draw_data_slice, model->draw_data_cpu, draw_data_bytes, 16);
+
+    VkBufferMemoryBarrier2 barrier = {
+        .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+        .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
+        .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+        .buffer        = model->draw_data_slice.buffer,
+        .offset        = model->draw_data_slice.offset,
+        .size          = draw_data_bytes,
+    };
+
+    VkDependencyInfo dep = {
+        .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .bufferMemoryBarrierCount = 1,
+        .pBufferMemoryBarriers    = &barrier,
+    };
+
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGpuModel* model)
+{
+    vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.gltf_minimal]);
+
+    if(model->draw_data_slice.buffer == VK_NULL_HANDLE || model->indirect_cmd_slice.buffer == VK_NULL_HANDLE
+       || model->indirect_count_slice.buffer == VK_NULL_HANDLE)
+        return;
+
+    GltfUberPush push  = {0};
+    push.draw_data_ptr = slice_device_address(&renderer, model->draw_data_slice);
+    push.skin_mats_ptr =
+        model->skin_mats_slice.buffer != VK_NULL_HANDLE ? slice_device_address(&renderer, model->skin_mats_slice) : 0;
+    push.mat_ptr = slice_device_address(&renderer, model->material_slice);
+    memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
+
+    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfUberPush), &push);
+
+    vkCmdDrawIndirectCount(cmd, model->indirect_cmd_slice.buffer, model->indirect_cmd_slice.offset,
+                           model->indirect_count_slice.buffer, model->indirect_count_slice.offset,
+                           model->cpu->mesh_count, sizeof(VkDrawIndirectCommand));
 }
 
 int main(void)
@@ -901,9 +1022,9 @@ int main(void)
         if(!gltf_gpu_model_init(&instances[loaded_count].model, glb_paths[i]))
             continue;
 
-        uint32_t col = loaded_count % GRID_COLUMNS;
-        uint32_t row = loaded_count / GRID_COLUMNS;
-        float grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
+        uint32_t col    = loaded_count % GRID_COLUMNS;
+        uint32_t row    = loaded_count / GRID_COLUMNS;
+        float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
 
         instances[loaded_count].position[0] = (float)col * GRID_SPACING_X - 0.5f * grid_w;
         instances[loaded_count].position[1] = 0.0f;
@@ -924,37 +1045,37 @@ int main(void)
 
     for(uint32_t i = 0; i < loaded_count; ++i)
     {
-        instances[i].animation_index = 0;
-        instances[i].animation_time = 0.0f;
-        instances[i].animation_speed = 1.0f;
+        instances[i].animation_index  = 0;
+        instances[i].animation_time   = 0.0f;
+        instances[i].animation_speed  = 1.0f;
         instances[i].animation_paused = false;
     }
 
-    bool prev_space = false;
-    bool prev_left = false;
-    bool prev_right = false;
-    bool prev_r = false;
-    bool prev_up = false;
-    bool prev_down = false;
+    bool   prev_space        = false;
+    bool   prev_left         = false;
+    bool   prev_right        = false;
+    bool   prev_r            = false;
+    bool   prev_up           = false;
+    bool   prev_down         = false;
     double prev_time_seconds = glfwGetTime();
 
     while(!glfwWindowShouldClose(renderer.window))
     {
         TracyCFrameMark;
 
-        double now_seconds = glfwGetTime();
-        float frame_delta_seconds = (float)(now_seconds - prev_time_seconds);
-        prev_time_seconds = now_seconds;
+        double now_seconds         = glfwGetTime();
+        float  frame_delta_seconds = (float)(now_seconds - prev_time_seconds);
+        prev_time_seconds          = now_seconds;
 
         if(frame_delta_seconds < 0.0f)
             frame_delta_seconds = 0.0f;
 
         bool key_space = glfwGetKey(renderer.window, GLFW_KEY_SPACE) == GLFW_PRESS;
-        bool key_left = glfwGetKey(renderer.window, GLFW_KEY_LEFT) == GLFW_PRESS;
+        bool key_left  = glfwGetKey(renderer.window, GLFW_KEY_LEFT) == GLFW_PRESS;
         bool key_right = glfwGetKey(renderer.window, GLFW_KEY_RIGHT) == GLFW_PRESS;
-        bool key_r = glfwGetKey(renderer.window, GLFW_KEY_R) == GLFW_PRESS;
-        bool key_up = glfwGetKey(renderer.window, GLFW_KEY_UP) == GLFW_PRESS;
-        bool key_down = glfwGetKey(renderer.window, GLFW_KEY_DOWN) == GLFW_PRESS;
+        bool key_r     = glfwGetKey(renderer.window, GLFW_KEY_R) == GLFW_PRESS;
+        bool key_up    = glfwGetKey(renderer.window, GLFW_KEY_UP) == GLFW_PRESS;
+        bool key_down  = glfwGetKey(renderer.window, GLFW_KEY_DOWN) == GLFW_PRESS;
 
         if(key_space && !prev_space)
         {
@@ -994,11 +1115,11 @@ int main(void)
         }
 
         prev_space = key_space;
-        prev_left = key_left;
+        prev_left  = key_left;
         prev_right = key_right;
-        prev_r = key_r;
-        prev_up = key_up;
-        prev_down = key_down;
+        prev_r     = key_r;
+        prev_up    = key_up;
+        prev_down  = key_down;
 
         for(uint32_t i = 0; i < loaded_count; ++i)
             update_animation_time(&instances[i], frame_delta_seconds);
@@ -1034,6 +1155,7 @@ int main(void)
             {
                 gltf_gpu_model_upload_once(&instances[i].model, cmd);
                 gltf_gpu_model_update_skinning(&instances[i], cmd);
+                gltf_gpu_model_update_draw_data(&instances[i], cmd);
             }
 
             VkRenderingAttachmentInfo color = {
@@ -1063,14 +1185,74 @@ int main(void)
                 .pDepthAttachment     = &depth,
             };
 
-            vkCmdBeginRendering(cmd, &rendering);
+    GPU_SCOPE(frame_prof, cmd, "MAIN", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
+    {
+	    vkCmdBeginRendering(cmd, &rendering);
             for(uint32_t i = 0; i < loaded_count; ++i)
-                draw_gltf_model(cmd, &cam, &instances[i].model, instances[i].position);
+                draw_gltf_model(cmd, &cam, &instances[i].model);
             vkCmdEndRendering(cmd);
+    }
+            TracyCZoneN(imgui_zone, "ImGui CPU", 1);
+            {
+                imgui_begin_frame();
+
+
+                igBegin("Renderer Debug", NULL, 0);
+
+                double cpu_frame_ms  = renderer.cpu_frame_ns / 1000000.0;
+                double cpu_active_ms = renderer.cpu_active_ns / 1000000.0;
+                double cpu_wait_ms   = renderer.cpu_wait_ns / 1000000.0;
+
+                igText("CPU frame (wall): %.3f ms", cpu_frame_ms);
+                igText("CPU active: %.3f ms", cpu_active_ms);
+                igText("CPU wait: %.3f ms", cpu_wait_ms);
+                igText("FPS: %.1f", cpu_frame_ms > 0.0 ? 1000.0 / cpu_frame_ms : 0.0);
+
+                igSeparator();
+                igSeparator();
+
+                igText("Camera Position");
+                igText("x: %.3f", cam.position[0]);
+                igText("y: %.3f", cam.position[1]);
+                igText("z: %.3f", cam.position[2]);
+
+                igSeparator();
+
+                igText("Yaw: %.3f", cam.yaw);
+                igText("Pitch: %.3f", cam.pitch);
+
+                igSeparator();
+                igText("GPU Profiler");
+                if(frame_prof->pass_count == 0)
+                {
+                    igText("No GPU samples collected yet.");
+                }
+                for(uint32_t i = 0; i < frame_prof->pass_count; i++)
+                {
+                    GpuPass* pass = &frame_prof->passes[i];
+                    igText("%s: %.3f ms", pass->name, pass->time_ms);
+                    if(frame_prof->enable_pipeline_stats)
+                    {
+                        igText("  VS: %llu | FS: %llu | Prim: %llu", (unsigned long long)pass->vs_invocations,
+                               (unsigned long long)pass->fs_invocations, (unsigned long long)pass->primitives);
+                    }
+                }
+
+                igEnd();
+                igRender();
+            }
+            TracyCZoneEnd(imgui_zone);
 
             post_pass();
             pass_smaa();
             pass_ldr_to_swapchain();
+            pass_imgui();
+
+
+            if(take_screenshot)
+            {
+                renderer_record_screenshot(&renderer, cmd);
+            }
 
             image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
@@ -1079,6 +1261,14 @@ int main(void)
 
         vk_cmd_end(cmd);
         submit_frame(&renderer);
+
+
+        if(take_screenshot)
+        {
+            renderer_save_screenshot(&renderer);
+
+            take_screenshot = false;
+        }
     }
 
     for(uint32_t i = 0; i < loaded_count; ++i)
