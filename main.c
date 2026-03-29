@@ -16,14 +16,14 @@
 #define GRID_SPACING_Z 2.6f
 static bool take_screenshot;
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;
-              float view_proj[4][4];);
+              float    view_proj[4][4];
+              float    camera_pos[3];
+              uint32_t _pad1;);
 
 typedef struct GltfIndirectDrawData
 {
-    VkDeviceAddress pos_ptr;
+    VkDeviceAddress vtx_ptr;
     VkDeviceAddress idx_ptr;
-    VkDeviceAddress nrm_ptr;
-    VkDeviceAddress uv_ptr;
     VkDeviceAddress joints_ptr;
     VkDeviceAddress weights_ptr;
     float           model[4][4];
@@ -33,16 +33,46 @@ typedef struct GltfIndirectDrawData
     uint32_t        _pad0;
 } GltfIndirectDrawData;
 
+typedef struct
+{
+    uint16_t vx, vy, vz;
+    uint16_t tp;
+    uint32_t np;
+    uint16_t tu, tv;
+} PackedVertex;
+
+MU_INLINE PackedVertex mu_pack_vertex(float px, float py, float pz, float nx, float ny, float nz, float tx, float ty, float u, float v, int bitangent_sign)
+{
+    PackedVertex pv;
+
+    pv.vx = mu_quantize_half(px);
+    pv.vy = mu_quantize_half(py);
+    pv.vz = mu_quantize_half(pz);
+
+    int qnx = mu_quantize_snorm(nx, 10);
+    int qny = mu_quantize_snorm(ny, 10);
+    int qnz = mu_quantize_snorm(nz, 10);
+
+    pv.np = ((uint32_t)(qnx & 1023)) | ((uint32_t)(qny & 1023) << 10) | ((uint32_t)(qnz & 1023) << 20)
+            | ((uint32_t)(bitangent_sign & 3) << 30);
+
+    int qtx = mu_quantize_snorm(tx, 8);
+    int qty = mu_quantize_snorm(ty, 8);
+
+    pv.tp = ((uint16_t)(qtx & 255) << 8) | ((uint16_t)(qty & 255));
+
+    pv.tu = (uint16_t)mu_quantize_unorm(u, 16);
+    pv.tv = (uint16_t)mu_quantize_unorm(v, 16);
+
+    return pv;
+}
+
 typedef struct GltfGpuMesh
 {
-    BufferSlice position_slice;
+    BufferSlice packed_vertex_slice;
     BufferSlice index_slice;
-    BufferSlice normal_slice;
-    BufferSlice uv_slice;
     BufferSlice joints_slice;
     BufferSlice weights_slice;
-    bool        has_normal;
-    bool        has_uv;
     bool        has_skin;
 } GltfGpuMesh;
 
@@ -452,32 +482,14 @@ static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
         if(!src->index || !src->attributes[GLTF_ATTRIBUTE_TYPE_POSITION])
             return false;
 
-        VkDeviceSize pos_bytes = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
+        VkDeviceSize vtx_bytes = (VkDeviceSize)src->vertex_count * sizeof(PackedVertex);
         VkDeviceSize idx_bytes = (VkDeviceSize)src->index_count * sizeof(uint32_t);
 
-        model->gpu_meshes[i].position_slice = buffer_pool_alloc(&renderer.gpu_pool, pos_bytes, 16);
-        model->gpu_meshes[i].index_slice    = buffer_pool_alloc(&renderer.gpu_pool, idx_bytes, 16);
+        model->gpu_meshes[i].packed_vertex_slice = buffer_pool_alloc(&renderer.gpu_pool, vtx_bytes, 16);
+        model->gpu_meshes[i].index_slice         = buffer_pool_alloc(&renderer.gpu_pool, idx_bytes, 16);
 
-        if(model->gpu_meshes[i].position_slice.buffer == VK_NULL_HANDLE || model->gpu_meshes[i].index_slice.buffer == VK_NULL_HANDLE)
+        if(model->gpu_meshes[i].packed_vertex_slice.buffer == VK_NULL_HANDLE || model->gpu_meshes[i].index_slice.buffer == VK_NULL_HANDLE)
             return false;
-
-        if(src->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL])
-        {
-            VkDeviceSize nrm_bytes            = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
-            model->gpu_meshes[i].normal_slice = buffer_pool_alloc(&renderer.gpu_pool, nrm_bytes, 16);
-            model->gpu_meshes[i].has_normal   = model->gpu_meshes[i].normal_slice.buffer != VK_NULL_HANDLE;
-            if(!model->gpu_meshes[i].has_normal)
-                return false;
-        }
-
-        if(src->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD])
-        {
-            VkDeviceSize uv_bytes         = (VkDeviceSize)src->vertex_count * 2u * sizeof(float);
-            model->gpu_meshes[i].uv_slice = buffer_pool_alloc(&renderer.gpu_pool, uv_bytes, 16);
-            model->gpu_meshes[i].has_uv   = model->gpu_meshes[i].uv_slice.buffer != VK_NULL_HANDLE;
-            if(!model->gpu_meshes[i].has_uv)
-                return false;
-        }
 
         if(src->attributes[GLTF_ATTRIBUTE_TYPE_JOINTS] && src->attributes[GLTF_ATTRIBUTE_TYPE_WEIGHTS])
         {
@@ -594,14 +606,10 @@ static void gltf_gpu_model_destroy(GltfGpuModel* model)
     {
         for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
         {
-            if(model->gpu_meshes[i].position_slice.buffer != VK_NULL_HANDLE)
-                buffer_pool_free(model->gpu_meshes[i].position_slice);
+            if(model->gpu_meshes[i].packed_vertex_slice.buffer != VK_NULL_HANDLE)
+                buffer_pool_free(model->gpu_meshes[i].packed_vertex_slice);
             if(model->gpu_meshes[i].index_slice.buffer != VK_NULL_HANDLE)
                 buffer_pool_free(model->gpu_meshes[i].index_slice);
-            if(model->gpu_meshes[i].normal_slice.buffer != VK_NULL_HANDLE)
-                buffer_pool_free(model->gpu_meshes[i].normal_slice);
-            if(model->gpu_meshes[i].uv_slice.buffer != VK_NULL_HANDLE)
-                buffer_pool_free(model->gpu_meshes[i].uv_slice);
             if(model->gpu_meshes[i].joints_slice.buffer != VK_NULL_HANDLE)
                 buffer_pool_free(model->gpu_meshes[i].joints_slice);
             if(model->gpu_meshes[i].weights_slice.buffer != VK_NULL_HANDLE)
@@ -662,7 +670,7 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
     if(model->uploaded)
         return;
 
-    uint32_t barrier_capacity = model->cpu->mesh_count * 8u + 5u;
+    uint32_t barrier_capacity = model->cpu->mesh_count * 6u + 5u;
     VkBufferMemoryBarrier2* barriers = (VkBufferMemoryBarrier2*)calloc(barrier_capacity, sizeof(VkBufferMemoryBarrier2));
     if(!barriers)
         return;
@@ -673,12 +681,61 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
         GLTFMesh*    src = &model->cpu->meshes[i];
         GltfGpuMesh* dst = &model->gpu_meshes[i];
 
-        VkDeviceSize pos_bytes = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
+        VkDeviceSize vtx_bytes = (VkDeviceSize)src->vertex_count * sizeof(PackedVertex);
         VkDeviceSize idx_bytes = (VkDeviceSize)src->index_count * sizeof(uint32_t);
 
-        renderer_upload_buffer_to_slice(&renderer, cmd, dst->position_slice,
-                                        src->attributes[GLTF_ATTRIBUTE_TYPE_POSITION], pos_bytes, 16);
+        float* positions = (float*)src->attributes[GLTF_ATTRIBUTE_TYPE_POSITION];
+        float* normals   = (float*)src->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL];
+        float* uvs       = (float*)src->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD];
+        float* tangents  = (float*)src->attributes[GLTF_ATTRIBUTE_TYPE_TANGENT];
+
+        PackedVertex* packed_vertices = (PackedVertex*)malloc(vtx_bytes);
+        if(!packed_vertices)
+        {
+            free(barriers);
+            return;
+        }
+
+        for(uint32_t v = 0; v < src->vertex_count; ++v)
+        {
+            float px = positions[v * 3u + 0u];
+            float py = positions[v * 3u + 1u];
+            float pz = positions[v * 3u + 2u];
+
+            float nx = 0.0f;
+            float ny = 1.0f;
+            float nz = 0.0f;
+            if(normals)
+            {
+                nx = normals[v * 3u + 0u];
+                ny = normals[v * 3u + 1u];
+                nz = normals[v * 3u + 2u];
+            }
+
+            float tx             = 1.0f;
+            float ty             = 0.0f;
+            int   bitangent_sign = 1;
+            if(tangents)
+            {
+                tx             = tangents[v * 4u + 0u];
+                ty             = tangents[v * 4u + 1u];
+                bitangent_sign = tangents[v * 4u + 3u] >= 0.0f ? 1 : -1;
+            }
+
+            float u = 0.0f;
+            float w = 0.0f;
+            if(uvs)
+            {
+                u = uvs[v * 2u + 0u];
+                w = uvs[v * 2u + 1u];
+            }
+
+            packed_vertices[v] = mu_pack_vertex(px, py, pz, nx, ny, nz, tx, ty, u, w, bitangent_sign);
+        }
+
+        renderer_upload_buffer_to_slice(&renderer, cmd, dst->packed_vertex_slice, packed_vertices, vtx_bytes, 16);
         renderer_upload_buffer_to_slice(&renderer, cmd, dst->index_slice, src->index, idx_bytes, 16);
+        free(packed_vertices);
 
         barriers[b++] = (VkBufferMemoryBarrier2){
             .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
@@ -686,9 +743,9 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
             .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
             .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-            .buffer        = dst->position_slice.buffer,
-            .offset        = dst->position_slice.offset,
-            .size          = pos_bytes,
+            .buffer        = dst->packed_vertex_slice.buffer,
+            .offset        = dst->packed_vertex_slice.offset,
+            .size          = vtx_bytes,
         };
 
         barriers[b++] = (VkBufferMemoryBarrier2){
@@ -701,40 +758,6 @@ static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
             .offset        = dst->index_slice.offset,
             .size          = idx_bytes,
         };
-
-        if(dst->has_normal)
-        {
-            VkDeviceSize nrm_bytes = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
-            renderer_upload_buffer_to_slice(&renderer, cmd, dst->normal_slice,
-                                            src->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL], nrm_bytes, 16);
-            barriers[b++] = (VkBufferMemoryBarrier2){
-                .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
-                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                .buffer        = dst->normal_slice.buffer,
-                .offset        = dst->normal_slice.offset,
-                .size          = nrm_bytes,
-            };
-        }
-
-        if(dst->has_uv)
-        {
-            VkDeviceSize uv_bytes = (VkDeviceSize)src->vertex_count * 2u * sizeof(float);
-            renderer_upload_buffer_to_slice(&renderer, cmd, dst->uv_slice,
-                                            src->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD], uv_bytes, 16);
-            barriers[b++] = (VkBufferMemoryBarrier2){
-                .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
-                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                .buffer        = dst->uv_slice.buffer,
-                .offset        = dst->uv_slice.offset,
-                .size          = uv_bytes,
-            };
-        }
 
         if(dst->has_skin)
         {
@@ -903,21 +926,14 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
         GLTFMesh*             mesh     = &model->cpu->meshes[i];
         GltfGpuMesh*          gpu_mesh = &model->gpu_meshes[i];
 
-        draw->pos_ptr     = slice_device_address(&renderer, gpu_mesh->position_slice);
+        draw->vtx_ptr     = slice_device_address(&renderer, gpu_mesh->packed_vertex_slice);
         draw->idx_ptr     = slice_device_address(&renderer, gpu_mesh->index_slice);
-        draw->nrm_ptr     = gpu_mesh->has_normal ? slice_device_address(&renderer, gpu_mesh->normal_slice) : 0;
-        draw->uv_ptr      = gpu_mesh->has_uv ? slice_device_address(&renderer, gpu_mesh->uv_slice) : 0;
         draw->joints_ptr  = 0;
         draw->weights_ptr = 0;
         draw->material_id = 0;
         draw->skin_offset = 0;
 
-        draw->flags = 0;
-        if(gpu_mesh->has_uv)
-            draw->flags |= 0x1;
-        if(gpu_mesh->has_normal)
-            draw->flags |= 0x2;
-
+        draw->flags    = 0;
         u32 node_index = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
             glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], draw->model);
@@ -981,6 +997,9 @@ static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGp
         model->skin_mats_slice.buffer != VK_NULL_HANDLE ? slice_device_address(&renderer, model->skin_mats_slice) : 0;
     push.mat_ptr = slice_device_address(&renderer, model->material_slice);
     memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
+    push.camera_pos[0] = cam->position[0];
+    push.camera_pos[1] = cam->position[1];
+    push.camera_pos[2] = cam->position[2];
 
     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfUberPush), &push);
 
@@ -1167,6 +1186,17 @@ int main(void)
                 .clearValue.color = {{0.10f, 0.12f, 0.15f, 1.0f}},
             };
 
+            // VkRenderingAttachmentInfo toon_data = {
+            //     .sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            //     .imageView        = renderer.toon_data[renderer.swapchain.current_image].view,
+            //     .imageLayout      = renderer.toon_data[renderer.swapchain.current_image].mip_states[0].layout,
+            //     .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            //     .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
+            //     .clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}},
+            // };
+            //
+            VkRenderingAttachmentInfo colors[1] = {color};
+
             VkRenderingAttachmentInfo depth = {
                 .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                 .imageView               = renderer.depth[renderer.swapchain.current_image].view,
@@ -1181,17 +1211,17 @@ int main(void)
                 .renderArea.extent    = renderer.swapchain.extent,
                 .layerCount           = 1,
                 .colorAttachmentCount = 1,
-                .pColorAttachments    = &color,
+                .pColorAttachments    = colors,
                 .pDepthAttachment     = &depth,
             };
 
-    GPU_SCOPE(frame_prof, cmd, "MAIN", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
-    {
-	    vkCmdBeginRendering(cmd, &rendering);
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                draw_gltf_model(cmd, &cam, &instances[i].model);
-            vkCmdEndRendering(cmd);
-    }
+            GPU_SCOPE(frame_prof, cmd, "MAIN", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
+            {
+                vkCmdBeginRendering(cmd, &rendering);
+                for(uint32_t i = 0; i < loaded_count; ++i)
+                    draw_gltf_model(cmd, &cam, &instances[i].model);
+                vkCmdEndRendering(cmd);
+            }
             TracyCZoneN(imgui_zone, "ImGui CPU", 1);
             {
                 imgui_begin_frame();
@@ -1244,6 +1274,7 @@ int main(void)
             TracyCZoneEnd(imgui_zone);
 
             post_pass();
+            //      pass_toon();
             pass_smaa();
             pass_ldr_to_swapchain();
             pass_imgui();

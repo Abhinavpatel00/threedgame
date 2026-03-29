@@ -6,14 +6,14 @@ struct Push
     uint _pad0;
 
     float4x4 view_proj;
+    float3 camera_pos;
+    uint _pad1;
 };
 
 struct DrawData
 {
-    uint64_t pos_ptr;
+    uint64_t vtx_ptr;
     uint64_t idx_ptr;
-    uint64_t nrm_ptr;
-    uint64_t uv_ptr;
     uint64_t joints_ptr;
     uint64_t weights_ptr;
     float4x4 model;
@@ -46,7 +46,64 @@ struct VSOutput
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
     nointerpolation uint material_id : TEXCOORD3;
+    nointerpolation uint object_id : TEXCOORD4;
 };
+
+struct FSOutput
+{
+    float4 color : SV_Target0;
+    float4 toon_data : SV_Target1;
+};
+
+float half_to_float(uint h)
+{
+    uint s = (h >> 15) & 1;
+    uint e = (h >> 10) & 31;
+    uint f = h & 1023;
+
+    uint out_bits;
+    if(e == 0)
+    {
+        if(f == 0)
+        {
+            out_bits = s << 31;
+        }
+        else
+        {
+            e = 1;
+            while((f & 1024) == 0)
+            {
+                f <<= 1;
+                e--;
+            }
+            f &= 1023;
+            uint exp32 = e + (127 - 15);
+            out_bits = (s << 31) | (exp32 << 23) | (f << 13);
+        }
+    }
+    else if(e == 31)
+    {
+        out_bits = (s << 31) | 0x7F800000 | (f << 13);
+    }
+    else
+    {
+        uint exp32 = e + (127 - 15);
+        out_bits = (s << 31) | (exp32 << 23) | (f << 13);
+    }
+
+    return asfloat(out_bits);
+}
+
+float snorm_decode(uint v, uint bits)
+{
+    uint mask = (1u << bits) - 1u;
+    int sv = int(v & mask);
+    int sign_bit = 1 << (int(bits) - 1);
+    if((sv & sign_bit) != 0)
+        sv |= ~int(mask);
+    float maxv = float((1 << (int(bits) - 1)) - 1);
+    return clamp(float(sv) / maxv, -1.0, 1.0);
+}
 
 [[vk::binding(0, 0)]]
 Texture2D textures[];
@@ -66,36 +123,33 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
     DrawData draw = draws[drawID];
 
     uint* indices = (uint*)draw.idx_ptr;
-    float* positions = (float*)draw.pos_ptr;
+    uint* vraw = (uint*)draw.vtx_ptr;
 
     uint idx = indices[vertexID];
+    uint v0 = vraw[idx * 4 + 0];
+    uint v1 = vraw[idx * 4 + 1];
+    uint v2 = vraw[idx * 4 + 2];
+    uint v3 = vraw[idx * 4 + 3];
+
+    uint vx = v0 & 0xFFFFu;
+    uint vy = (v0 >> 16) & 0xFFFFu;
+    uint vz = v1 & 0xFFFFu;
+    uint tu = v3 & 0xFFFFu;
+    uint tv = (v3 >> 16) & 0xFFFFu;
 
     float3 p = float3(
-        positions[idx * 3 + 0],
-        positions[idx * 3 + 1],
-        positions[idx * 3 + 2]
+        half_to_float(vx),
+        half_to_float(vy),
+        half_to_float(vz)
     );
 
-    float3 n = float3(0.0, 1.0, 0.0);
-    if((draw.flags & 0x2) != 0)
-    {
-        float* normals = (float*)draw.nrm_ptr;
-        n = float3(
-            normals[idx * 3 + 0],
-            normals[idx * 3 + 1],
-            normals[idx * 3 + 2]
-        );
-    }
+    float3 n = normalize(float3(
+        snorm_decode(v2, 10),
+        snorm_decode(v2 >> 10, 10),
+        snorm_decode(v2 >> 20, 10)
+    ));
 
-    float2 uv = float2(0.0, 0.0);
-    if((draw.flags & 0x1) != 0)
-    {
-        float* uvs = (float*)draw.uv_ptr;
-        uv = float2(
-            uvs[idx * 2 + 0],
-            uvs[idx * 2 + 1]
-        );
-    }
+    float2 uv = float2(float(tu) / 65535.0, float(tv) / 65535.0);
 
     float4 world = mul(draw.model, float4(p, 1.0));
     float3 world_n = n;
@@ -147,13 +201,16 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
     o.normal = ((draw.flags & 0x4) != 0) ? world_n : normalize(mul(nrm_mat, n));
     o.uv = uv;
     o.material_id = draw.material_id;
+    o.object_id = drawID + 1u;
 
     return o;
 }
 
 [shader("fragment")]
-float4 fs_main(VSOutput i) : SV_Target0
+FSOutput fs_main(VSOutput i)
 {
+    FSOutput o;
+
     GPUMaterial* materials = (GPUMaterial*)push.mat_ptr;
     GPUMaterial mat = materials[i.material_id];
 
@@ -196,5 +253,10 @@ float4 fs_main(VSOutput i) : SV_Target0
         emissive *= textures[mat.emissive_tex].Sample(samp, i.uv).rgb;
 
     float3 color = diffuse + specular + fill + emissive;
-    return float4(color, base_color.a);
+    o.color = float4(color, base_color.a);
+
+    float3 n01 = normalize(i.normal) * 0.5 + 0.5;
+    float depth01 = saturate(i.position.z);
+    o.toon_data = float4(n01.xy, depth01, float(i.object_id));
+    return o;
 }
