@@ -1,10 +1,134 @@
 #include "gltfloader.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "external/cglm/include/cglm/cglm.h"
 #include "external/cgltf/cgltf.h"
+
+static GLTFInterpolation to_interp(cgltf_interpolation_type interpolation)
+{
+    switch(interpolation)
+    {
+        case cgltf_interpolation_type_step:
+            return GLTF_INTERPOLATION_STEP;
+        case cgltf_interpolation_type_cubic_spline:
+            return GLTF_INTERPOLATION_CUBICSPLINE;
+        case cgltf_interpolation_type_linear:
+        default:
+            return GLTF_INTERPOLATION_LINEAR;
+    }
+}
+
+static float clamp01(float x)
+{
+    if(x < 0.0f)
+        return 0.0f;
+    if(x > 1.0f)
+        return 1.0f;
+    return x;
+}
+
+static GLTFAnimationPath to_anim_path(cgltf_animation_path_type path)
+{
+    switch(path)
+    {
+        case cgltf_animation_path_type_rotation:
+            return GLTF_ANIMATION_PATH_ROTATION;
+        case cgltf_animation_path_type_scale:
+            return GLTF_ANIMATION_PATH_SCALE;
+        case cgltf_animation_path_type_weights:
+            return GLTF_ANIMATION_PATH_WEIGHTS;
+        case cgltf_animation_path_type_translation:
+        default:
+            return GLTF_ANIMATION_PATH_TRANSLATION;
+    }
+}
+
+static void build_trs_matrix(const vec3 t, const versor r, const vec3 s, mat4 out)
+{
+    vec3 tt = {t[0], t[1], t[2]};
+    versor rr = {r[0], r[1], r[2], r[3]};
+    vec3 ss = {s[0], s[1], s[2]};
+    mat4 tm;
+    mat4 rm;
+    mat4 sm;
+    mat4 tr;
+
+    glm_translate_make(tm, tt);
+    glm_quat_mat4(rr, rm);
+    glm_scale_make(sm, ss);
+    glm_mat4_mul(tm, rm, tr);
+    glm_mat4_mul(tr, sm, out);
+}
+
+static int animation_find_keyframe(const float* times, u32 count, float t)
+{
+    if(count < 2)
+        return 0;
+
+    if(t <= times[0])
+        return 0;
+    if(t >= times[count - 1])
+        return (int)count - 2;
+
+    for(u32 i = 0; i + 1 < count; ++i)
+    {
+        if(t >= times[i] && t <= times[i + 1])
+            return (int)i;
+    }
+
+    return (int)count - 2;
+}
+
+static void animation_sample_vec(const GLTFAnimationSampler* sampler, float t, float* out_values)
+{
+    if(!sampler || sampler->input_count == 0 || !sampler->input_times || !sampler->output_values)
+        return;
+
+    if(sampler->input_count == 1)
+    {
+        for(u32 c = 0; c < sampler->output_stride; ++c)
+            out_values[c] = sampler->output_values[c];
+        return;
+    }
+
+    int i0 = animation_find_keyframe(sampler->input_times, sampler->input_count, t);
+    int i1 = i0 + 1;
+
+    float t0 = sampler->input_times[i0];
+    float t1 = sampler->input_times[i1];
+    float alpha = (t1 > t0) ? (t - t0) / (t1 - t0) : 0.0f;
+    alpha = clamp01(alpha);
+
+    const float* v0 = &sampler->output_values[(size_t)i0 * sampler->output_stride];
+    const float* v1 = &sampler->output_values[(size_t)i1 * sampler->output_stride];
+
+    if(sampler->interpolation == GLTF_INTERPOLATION_STEP)
+    {
+        for(u32 c = 0; c < sampler->output_stride; ++c)
+            out_values[c] = v0[c];
+        return;
+    }
+
+    if(sampler->output_stride == 4)
+    {
+        versor q0 = {v0[0], v0[1], v0[2], v0[3]};
+        versor q1 = {v1[0], v1[1], v1[2], v1[3]};
+        versor q_out;
+        glm_quat_slerp(q0, q1, alpha, q_out);
+        out_values[0] = q_out[0];
+        out_values[1] = q_out[1];
+        out_values[2] = q_out[2];
+        out_values[3] = q_out[3];
+        return;
+    }
+
+    for(u32 c = 0; c < sampler->output_stride; ++c)
+        out_values[c] = v0[c] + (v1[c] - v0[c]) * alpha;
+}
 
 static GLTFAttributeType to_gltf_attr(cgltf_attribute_type type)
 {
@@ -325,6 +449,10 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
     gltf->sampler_count  = (u32)data->samplers_count;
     gltf->node_count     = (u32)data->nodes_count;
     gltf->skin_count     = (u32)data->skins_count;
+    gltf->animation_count = (u32)data->animations_count;
+
+    gltf->handle = data;
+    strncpy(gltf->source_path, path, sizeof(gltf->source_path) - 1);
 
     size_t primitive_count = 0;
     for(size_t m = 0; m < data->meshes_count; ++m)
@@ -342,22 +470,28 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
     {
         gltf->meshes = (GLTFMesh*)calloc(gltf->mesh_count, sizeof(GLTFMesh));
         gltf->material_indices = (u32*)malloc((size_t)gltf->mesh_count * sizeof(u32));
+        gltf->mesh_node_indices = (u32*)malloc((size_t)gltf->mesh_count * sizeof(u32));
     }
     if(gltf->node_count > 0)
         gltf->nodes = (GLTFNode*)calloc(gltf->node_count, sizeof(GLTFNode));
     if(gltf->skin_count > 0)
         gltf->skins = (GLTFSkin*)calloc(gltf->skin_count, sizeof(GLTFSkin));
+    if(gltf->animation_count > 0)
+        gltf->animations = (GLTFAnimationClip*)calloc(gltf->animation_count, sizeof(GLTFAnimationClip));
 
     if((gltf->material_count > 0 && !gltf->materials) ||
        (gltf->sampler_count > 0 && !gltf->samplers) ||
-       (gltf->mesh_count > 0 && (!gltf->meshes || !gltf->material_indices)) ||
+       (gltf->mesh_count > 0 && (!gltf->meshes || !gltf->material_indices || !gltf->mesh_node_indices)) ||
        (gltf->node_count > 0 && !gltf->nodes) ||
-       (gltf->skin_count > 0 && !gltf->skins))
+       (gltf->skin_count > 0 && !gltf->skins) ||
+       (gltf->animation_count > 0 && !gltf->animations))
     {
         freeGltf(gltf);
-        cgltf_free(data);
         return false;
     }
+
+    for(u32 i = 0; i < gltf->mesh_count; ++i)
+        gltf->mesh_node_indices[i] = UINT_MAX;
 
     u32 draw_index = 0;
     for(size_t m = 0; m < data->meshes_count; ++m)
@@ -370,7 +504,6 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
             if(!load_primitive_geometry(prim, &gltf->meshes[draw_index], flags))
             {
                 freeGltf(gltf);
-                cgltf_free(data);
                 return false;
             }
 
@@ -403,7 +536,6 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
             if(!dst->child_indices)
             {
                 freeGltf(gltf);
-                cgltf_free(data);
                 return false;
             }
             for(size_t i = 0; i < src->children_count; ++i)
@@ -417,7 +549,6 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
             if(!dst->weights)
             {
                 freeGltf(gltf);
-                cgltf_free(data);
                 return false;
             }
             for(size_t i = 0; i < src->weights_count; ++i)
@@ -435,6 +566,13 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
             }
             dst->mesh_index = mesh_base;
             dst->mesh_count = (u32)src->mesh->primitives_count;
+
+            for(u32 primitive = 0; primitive < dst->mesh_count; ++primitive)
+            {
+                u32 global_primitive = dst->mesh_index + primitive;
+                if(global_primitive < gltf->mesh_count && gltf->mesh_node_indices[global_primitive] == UINT_MAX)
+                    gltf->mesh_node_indices[global_primitive] = n;
+            }
         }
 
         dst->translation[0] = src->has_translation ? src->translation[0] : 0.0f;
@@ -483,7 +621,6 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
         if(!dst->joint_node_indices || !dst->inverse_bind_matrices)
         {
             freeGltf(gltf);
-            cgltf_free(data);
             return false;
         }
 
@@ -570,7 +707,87 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
         dst->unlit        = src->unlit;
     }
 
-    cgltf_free(data);
+    for(u32 i = 0; i < gltf->animation_count; ++i)
+    {
+        const cgltf_animation* src_anim = &data->animations[i];
+        GLTFAnimationClip* dst_anim     = &gltf->animations[i];
+
+        if(src_anim->name)
+            strncpy(dst_anim->name, src_anim->name, GLTF_NAME_MAX_LENGTH - 1);
+
+        dst_anim->sampler_count = (u32)src_anim->samplers_count;
+        dst_anim->channel_count = (u32)src_anim->channels_count;
+
+        if(dst_anim->sampler_count > 0)
+            dst_anim->samplers = (GLTFAnimationSampler*)calloc(dst_anim->sampler_count, sizeof(GLTFAnimationSampler));
+        if(dst_anim->channel_count > 0)
+            dst_anim->channels = (GLTFAnimationChannel*)calloc(dst_anim->channel_count, sizeof(GLTFAnimationChannel));
+
+        if((dst_anim->sampler_count > 0 && !dst_anim->samplers) || (dst_anim->channel_count > 0 && !dst_anim->channels))
+        {
+            freeGltf(gltf);
+            return false;
+        }
+
+        dst_anim->duration = 0.0f;
+
+        for(u32 s = 0; s < dst_anim->sampler_count; ++s)
+        {
+            const cgltf_animation_sampler* src_sampler = &src_anim->samplers[s];
+            GLTFAnimationSampler* dst_sampler          = &dst_anim->samplers[s];
+
+            if(!src_sampler->input || !src_sampler->output)
+                continue;
+
+            dst_sampler->input_count   = (u32)src_sampler->input->count;
+            dst_sampler->interpolation = to_interp(src_sampler->interpolation);
+
+            if(src_sampler->output->type == cgltf_type_vec4)
+                dst_sampler->output_stride = 4;
+            else
+                dst_sampler->output_stride = 3;
+
+            if(dst_sampler->input_count == 0)
+                continue;
+
+            dst_sampler->input_times = (float*)malloc((size_t)dst_sampler->input_count * sizeof(float));
+            dst_sampler->output_values = (float*)malloc((size_t)dst_sampler->input_count * dst_sampler->output_stride * sizeof(float));
+
+            if(!dst_sampler->input_times || !dst_sampler->output_values)
+            {
+                freeGltf(gltf);
+                return false;
+            }
+
+            for(u32 k = 0; k < dst_sampler->input_count; ++k)
+            {
+                float key_time = 0.0f;
+                cgltf_accessor_read_float(src_sampler->input, k, &key_time, 1);
+                dst_sampler->input_times[k] = key_time;
+                if(key_time > dst_anim->duration)
+                    dst_anim->duration = key_time;
+            }
+
+            for(u32 k = 0; k < dst_sampler->input_count; ++k)
+            {
+                float tmp[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                cgltf_accessor_read_float(src_sampler->output, k, tmp, (int)dst_sampler->output_stride);
+                for(u32 c = 0; c < dst_sampler->output_stride; ++c)
+                    dst_sampler->output_values[(size_t)k * dst_sampler->output_stride + c] = tmp[c];
+            }
+        }
+
+        for(u32 c = 0; c < dst_anim->channel_count; ++c)
+        {
+            const cgltf_animation_channel* src_channel = &src_anim->channels[c];
+            GLTFAnimationChannel* dst_channel          = &dst_anim->channels[c];
+
+            dst_channel->node_index = src_channel->target_node ? (u32)(src_channel->target_node - data->nodes) : UINT_MAX;
+            dst_channel->sampler_index = src_channel->sampler ? (u32)(src_channel->sampler - src_anim->samplers) : UINT_MAX;
+            dst_channel->path = to_anim_path(src_channel->target_path);
+        }
+    }
+
     *outGltf = gltf;
     return true;
 }
@@ -604,12 +821,119 @@ void freeGltf(GLTFContainer* gltf)
         }
     }
 
+    if(gltf->animations)
+    {
+        for(u32 i = 0; i < gltf->animation_count; ++i)
+        {
+            GLTFAnimationClip* clip = &gltf->animations[i];
+            if(clip->samplers)
+            {
+                for(u32 s = 0; s < clip->sampler_count; ++s)
+                {
+                    free(clip->samplers[s].input_times);
+                    free(clip->samplers[s].output_values);
+                }
+            }
+            free(clip->samplers);
+            free(clip->channels);
+        }
+    }
+
     free(gltf->image_usage);
     free(gltf->materials);
     free(gltf->material_indices);
     free(gltf->samplers);
     free(gltf->meshes);
+    free(gltf->mesh_node_indices);
     free(gltf->nodes);
     free(gltf->skins);
+    free(gltf->animations);
+    if(gltf->handle)
+        cgltf_free(gltf->handle);
     free(gltf);
+}
+
+void gltf_apply_animation(const GLTFContainer* gltf, u32 animation_index, float time_seconds, mat4* out_node_world_matrices)
+{
+    if(!gltf || !out_node_world_matrices || gltf->node_count == 0)
+        return;
+
+    vec3* node_t = (vec3*)malloc((size_t)gltf->node_count * sizeof(vec3));
+    versor* node_r = (versor*)malloc((size_t)gltf->node_count * sizeof(versor));
+    vec3* node_s = (vec3*)malloc((size_t)gltf->node_count * sizeof(vec3));
+    if(!node_t || !node_r || !node_s)
+    {
+        free(node_t);
+        free(node_r);
+        free(node_s);
+        return;
+    }
+
+    for(u32 i = 0; i < gltf->node_count; ++i)
+    {
+        glm_vec3_copy(gltf->nodes[i].translation, node_t[i]);
+        glm_vec4_copy(gltf->nodes[i].rotation, node_r[i]);
+        glm_vec3_copy(gltf->nodes[i].scale, node_s[i]);
+    }
+
+    if(animation_index < gltf->animation_count)
+    {
+        const GLTFAnimationClip* clip = &gltf->animations[animation_index];
+        float t = time_seconds;
+        if(clip->duration > 0.0f)
+            t = fmodf(time_seconds, clip->duration);
+
+        for(u32 c = 0; c < clip->channel_count; ++c)
+        {
+            const GLTFAnimationChannel* channel = &clip->channels[c];
+            if(channel->node_index == UINT_MAX || channel->node_index >= gltf->node_count)
+                continue;
+            if(channel->sampler_index == UINT_MAX || channel->sampler_index >= clip->sampler_count)
+                continue;
+
+            const GLTFAnimationSampler* sampler = &clip->samplers[channel->sampler_index];
+            float sampled[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            animation_sample_vec(sampler, t, sampled);
+
+            switch(channel->path)
+            {
+                case GLTF_ANIMATION_PATH_TRANSLATION:
+                    node_t[channel->node_index][0] = sampled[0];
+                    node_t[channel->node_index][1] = sampled[1];
+                    node_t[channel->node_index][2] = sampled[2];
+                    break;
+                case GLTF_ANIMATION_PATH_ROTATION:
+                    node_r[channel->node_index][0] = sampled[0];
+                    node_r[channel->node_index][1] = sampled[1];
+                    node_r[channel->node_index][2] = sampled[2];
+                    node_r[channel->node_index][3] = sampled[3];
+                    glm_quat_normalize(node_r[channel->node_index]);
+                    break;
+                case GLTF_ANIMATION_PATH_SCALE:
+                    node_s[channel->node_index][0] = sampled[0];
+                    node_s[channel->node_index][1] = sampled[1];
+                    node_s[channel->node_index][2] = sampled[2];
+                    break;
+                case GLTF_ANIMATION_PATH_WEIGHTS:
+                default:
+                    break;
+            }
+        }
+    }
+
+    for(u32 i = 0; i < gltf->node_count; ++i)
+    {
+        mat4 local;
+        build_trs_matrix(node_t[i], node_r[i], node_s[i], local);
+
+        u32 parent = gltf->nodes[i].parent_index;
+        if(parent != UINT_MAX && parent < gltf->node_count)
+            glm_mat4_mul(out_node_world_matrices[parent], local, out_node_world_matrices[i]);
+        else
+            glm_mat4_copy(local, out_node_world_matrices[i]);
+    }
+
+    free(node_t);
+    free(node_r);
+    free(node_s);
 }

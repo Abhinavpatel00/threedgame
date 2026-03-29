@@ -168,22 +168,70 @@ typedef struct SamplerDesc
 
 typedef struct GLTFContainer
 {
+    cgltf_data*      handle;
+    char             source_path[512];
+
     GLTFImageUsage* image_usage;
     GLTFMaterial*   materials;
     u32*            material_indices;
     SamplerDesc*    samplers;
     GLTFMesh*       meshes;
+    u32*            mesh_node_indices;
     GLTFNode*       nodes;
     GLTFSkin*       skins;
+
+    struct GLTFAnimationClip* animations;
 
     u32 material_count;
     u32 sampler_count;
     u32 mesh_count;
     u32 node_count;
     u32 skin_count;
+    u32 animation_count;
     u32 index_count;
     u32 vertex_count;
 } GLTFContainer;
+
+typedef enum GLTFAnimationPath
+{
+    GLTF_ANIMATION_PATH_TRANSLATION,
+    GLTF_ANIMATION_PATH_ROTATION,
+    GLTF_ANIMATION_PATH_SCALE,
+    GLTF_ANIMATION_PATH_WEIGHTS,
+} GLTFAnimationPath;
+
+typedef enum GLTFInterpolation
+{
+    GLTF_INTERPOLATION_LINEAR,
+    GLTF_INTERPOLATION_STEP,
+    GLTF_INTERPOLATION_CUBICSPLINE,
+} GLTFInterpolation;
+
+typedef struct GLTFAnimationSampler
+{
+    float*            input_times;
+    float*            output_values;
+    u32               input_count;
+    u32               output_stride;
+    GLTFInterpolation interpolation;
+} GLTFAnimationSampler;
+
+typedef struct GLTFAnimationChannel
+{
+    u32               node_index;
+    u32               sampler_index;
+    GLTFAnimationPath path;
+} GLTFAnimationChannel;
+
+typedef struct GLTFAnimationClip
+{
+    char                  name[GLTF_NAME_MAX_LENGTH];
+    GLTFAnimationSampler* samplers;
+    GLTFAnimationChannel* channels;
+    u32                   sampler_count;
+    u32                   channel_count;
+    float                 duration;
+} GLTFAnimationClip;
 
 typedef enum GLTFFlags
 {
@@ -193,3 +241,4 @@ typedef enum GLTFFlags
 
 bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf);
 void freeGltf(GLTFContainer* gltf);
+void gltf_apply_animation(const GLTFContainer* gltf, u32 animation_index, float time_seconds, mat4* out_node_world_matrices);

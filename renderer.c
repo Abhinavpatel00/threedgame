@@ -86,8 +86,8 @@ void gfx_pipelines()
         pipelines.postprocess = pipeline_create_compute(&renderer, "compiledshaders/postprocess.comp.spv");
         {
             GraphicsPipelineConfig cfg = pipeline_config_default();
-            cfg.vert_path              = "compiledshaders/gltf_minimal.vert.spv";
-            cfg.frag_path              = "compiledshaders/gltf_minimal.frag.spv";
+            cfg.vert_path              = "compiledshaders/gltf_uber.vert.spv";
+            cfg.frag_path              = "compiledshaders/gltf_uber.frag.spv";
             cfg.color_attachment_count = 1;
             cfg.color_formats          = &renderer.hdr_color[1].format;
             cfg.depth_format           = renderer.depth[1].format;
