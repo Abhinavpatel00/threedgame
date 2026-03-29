@@ -1,6 +1,6 @@
 #include "renderer.h"
 #include "passes.h"
-#include "gltfloader_minimal.h"
+#include "gltfloader.h"
 
 #include <string.h>
 
@@ -22,11 +22,16 @@ PUSH_CONSTANT(GltfMinimalPush,
 
 typedef struct GltfGpuMesh
 {
-    GltfMinimalMesh cpu;
-    BufferSlice     position_slice;
-    BufferSlice     index_slice;
-    bool            uploaded;
+    BufferSlice position_slice;
+    BufferSlice index_slice;
 } GltfGpuMesh;
+
+typedef struct GltfGpuModel
+{
+    GLTFContainer* cpu;
+    GltfGpuMesh*   gpu_meshes;
+    bool           uploaded;
+} GltfGpuModel;
 
 
 static VkDeviceAddress slice_device_address(const Renderer* r, BufferSlice slice)
@@ -38,97 +43,134 @@ static VkDeviceAddress slice_device_address(const Renderer* r, BufferSlice slice
     return vkGetBufferDeviceAddress(r->device, &info) + slice.offset;
 }
 
-static bool gltf_gpu_mesh_init(GltfGpuMesh* mesh)
+static bool gltf_gpu_model_init(GltfGpuModel* model)
 {
-    memset(mesh, 0, sizeof(*mesh));
+    memset(model, 0, sizeof(*model));
 
-    if(!gltf_minimal_load_first_mesh(GLTF_MODEL_PATH, &mesh->cpu))
+    if(!loadGltf(GLTF_MODEL_PATH, GLTF_FLAG_LOAD_VERTICES | GLTF_FLAG_CALCULATE_BOUNDS, &model->cpu))
         return false;
 
-    VkDeviceSize pos_bytes = (VkDeviceSize)mesh->cpu.vertex_count * 3u * sizeof(float);
-    VkDeviceSize idx_bytes = (VkDeviceSize)mesh->cpu.index_count * sizeof(uint32_t);
+    if(model->cpu->mesh_count == 0)
+        return false;
 
-    mesh->position_slice = buffer_pool_alloc(&renderer.gpu_pool, pos_bytes, 16);
-    mesh->index_slice    = buffer_pool_alloc(&renderer.gpu_pool, idx_bytes, 16);
+    model->gpu_meshes = (GltfGpuMesh*)calloc(model->cpu->mesh_count, sizeof(GltfGpuMesh));
+    if(!model->gpu_meshes)
+        return false;
 
-    return mesh->position_slice.buffer != VK_NULL_HANDLE && mesh->index_slice.buffer != VK_NULL_HANDLE;
+    for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
+    {
+        GLTFMesh* src = &model->cpu->meshes[i];
+        if(!src->index || !src->attributes[GLTF_ATTRIBUTE_TYPE_POSITION])
+            return false;
+
+        VkDeviceSize pos_bytes = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
+        VkDeviceSize idx_bytes = (VkDeviceSize)src->index_count * sizeof(uint32_t);
+
+        model->gpu_meshes[i].position_slice = buffer_pool_alloc(&renderer.gpu_pool, pos_bytes, 16);
+        model->gpu_meshes[i].index_slice    = buffer_pool_alloc(&renderer.gpu_pool, idx_bytes, 16);
+
+        if(model->gpu_meshes[i].position_slice.buffer == VK_NULL_HANDLE || model->gpu_meshes[i].index_slice.buffer == VK_NULL_HANDLE)
+            return false;
+    }
+
+    return true;
 }
 
-static void gltf_gpu_mesh_destroy(GltfGpuMesh* mesh)
+static void gltf_gpu_model_destroy(GltfGpuModel* model)
 {
-    if(mesh->position_slice.buffer != VK_NULL_HANDLE)
-        buffer_pool_free(mesh->position_slice);
-    if(mesh->index_slice.buffer != VK_NULL_HANDLE)
-        buffer_pool_free(mesh->index_slice);
+    if(model->gpu_meshes && model->cpu)
+    {
+        for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
+        {
+            if(model->gpu_meshes[i].position_slice.buffer != VK_NULL_HANDLE)
+                buffer_pool_free(model->gpu_meshes[i].position_slice);
+            if(model->gpu_meshes[i].index_slice.buffer != VK_NULL_HANDLE)
+                buffer_pool_free(model->gpu_meshes[i].index_slice);
+        }
+    }
 
-    gltf_minimal_free_mesh(&mesh->cpu);
-    memset(mesh, 0, sizeof(*mesh));
+    free(model->gpu_meshes);
+    freeGltf(model->cpu);
+    memset(model, 0, sizeof(*model));
 }
 
-static void gltf_gpu_mesh_upload_once(GltfGpuMesh* mesh, VkCommandBuffer cmd)
+static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
 {
-    if(mesh->uploaded)
+    if(model->uploaded)
         return;
 
-    VkDeviceSize pos_bytes = (VkDeviceSize)mesh->cpu.vertex_count * 3u * sizeof(float);
-    VkDeviceSize idx_bytes = (VkDeviceSize)mesh->cpu.index_count * sizeof(uint32_t);
+    uint32_t barrier_count = model->cpu->mesh_count * 2u;
+    VkBufferMemoryBarrier2* barriers = (VkBufferMemoryBarrier2*)calloc(barrier_count, sizeof(VkBufferMemoryBarrier2));
+    if(!barriers)
+        return;
 
-    renderer_upload_buffer_to_slice(&renderer, cmd, mesh->position_slice, mesh->cpu.positions_xyz, pos_bytes, 16);
-    renderer_upload_buffer_to_slice(&renderer, cmd, mesh->index_slice, mesh->cpu.indices, idx_bytes, 16);
+    uint32_t b = 0;
+    for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
+    {
+        GLTFMesh* src = &model->cpu->meshes[i];
+        GltfGpuMesh* dst = &model->gpu_meshes[i];
+        VkDeviceSize pos_bytes = (VkDeviceSize)src->vertex_count * 3u * sizeof(float);
+        VkDeviceSize idx_bytes = (VkDeviceSize)src->index_count * sizeof(uint32_t);
 
-    VkBufferMemoryBarrier2 barriers[2] = {
-        {
+        renderer_upload_buffer_to_slice(&renderer, cmd, dst->position_slice, src->attributes[GLTF_ATTRIBUTE_TYPE_POSITION], pos_bytes, 16);
+        renderer_upload_buffer_to_slice(&renderer, cmd, dst->index_slice, src->index, idx_bytes, 16);
+
+        barriers[b++] = (VkBufferMemoryBarrier2){
             .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
             .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
             .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
             .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-            .buffer        = mesh->position_slice.buffer,
-            .offset        = mesh->position_slice.offset,
+            .buffer        = dst->position_slice.buffer,
+            .offset        = dst->position_slice.offset,
             .size          = pos_bytes,
-        },
-        {
+        };
+        barriers[b++] = (VkBufferMemoryBarrier2){
             .sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
             .srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT,
             .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
             .dstStageMask  = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-            .buffer        = mesh->index_slice.buffer,
-            .offset        = mesh->index_slice.offset,
+            .buffer        = dst->index_slice.buffer,
+            .offset        = dst->index_slice.offset,
             .size          = idx_bytes,
-        },
-    };
+        };
+    }
 
     VkDependencyInfo dep = {
         .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .bufferMemoryBarrierCount = 2,
+        .bufferMemoryBarrierCount = b,
         .pBufferMemoryBarriers    = barriers,
     };
     vkCmdPipelineBarrier2(cmd, &dep);
+    free(barriers);
 
-    mesh->uploaded = true;
+    model->uploaded = true;
 }
 
-static void draw_gltf_mesh(VkCommandBuffer cmd, const Camera* cam, const GltfGpuMesh* mesh)
+static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGpuModel* model)
 {
-    GltfMinimalPush push = {0};
-
-    push.pos_ptr     = slice_device_address(&renderer, mesh->position_slice);
-    push.idx_ptr     = slice_device_address(&renderer, mesh->index_slice);
-    push.index_count = mesh->cpu.index_count;
-
-    glm_mat4_identity(push.model);
-    memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
-
-    push.color[0] = 0.86f;
-    push.color[1] = 0.78f;
-    push.color[2] = 0.63f;
-    push.color[3] = 1.0f;
-
     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.gltf_minimal]);
-    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfMinimalPush), &push);
-    vkCmdDraw(cmd, mesh->cpu.index_count, 1, 0, 0);
+
+    for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
+    {
+        GltfMinimalPush push = {0};
+        push.pos_ptr = slice_device_address(&renderer, model->gpu_meshes[i].position_slice);
+        push.idx_ptr = slice_device_address(&renderer, model->gpu_meshes[i].index_slice);
+        push.index_count = model->cpu->meshes[i].index_count;
+
+        glm_mat4_identity(push.model);
+        memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
+
+        push.color[0] = 0.86f;
+        push.color[1] = 0.78f;
+        push.color[2] = 0.63f;
+        push.color[3] = 1.0f;
+
+        vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfMinimalPush), &push);
+        vkCmdDraw(cmd, push.index_count, 1, 0, 0);
+    }
 }
 
 int main(void)
@@ -140,9 +182,10 @@ int main(void)
     camera3d_set_position(&cam, 0.0f, 0.6f, 4.0f);
     camera3d_set_rotation_yaw_pitch(&cam, 0.0f, 0.0f);
 
-    GltfGpuMesh beaver = {0};
-    if(!gltf_gpu_mesh_init(&beaver))
+    GltfGpuModel beaver = {0};
+    if(!gltf_gpu_model_init(&beaver))
     {
+        gltf_gpu_model_destroy(&beaver);
         renderer_destroy(&renderer);
         return 1;
     }
@@ -177,7 +220,7 @@ int main(void)
                                        VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
             flush_barriers(cmd);
 		}
-            gltf_gpu_mesh_upload_once(&beaver, cmd);
+            gltf_gpu_model_upload_once(&beaver, cmd);
 
             VkRenderingAttachmentInfo color = {
                 .sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -207,7 +250,7 @@ int main(void)
             };
 
             vkCmdBeginRendering(cmd, &rendering);
-            draw_gltf_mesh(cmd, &cam, &beaver);
+            draw_gltf_model(cmd, &cam, &beaver);
             vkCmdEndRendering(cmd);
 
             post_pass();
@@ -223,7 +266,7 @@ int main(void)
         submit_frame(&renderer);
     }
 
-    gltf_gpu_mesh_destroy(&beaver);
+    gltf_gpu_model_destroy(&beaver);
     renderer_destroy(&renderer);
     return 0;
 }
