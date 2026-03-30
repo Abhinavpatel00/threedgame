@@ -10,7 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GLTF_MODEL_DIR "assets/cubepets/Models/GLB format"
+#define BLOCKY_DIR "assets/blocky/Models/GLB format"
+#define PETS_DIR "assets/cubepets/Models/GLB format"
 #define GRID_COLUMNS 5u
 #define GRID_SPACING_X 2.6f
 #define GRID_SPACING_Z 2.6f
@@ -1020,7 +1021,7 @@ int main(void)
     char**   glb_paths = NULL;
     uint32_t glb_count = 0;
 
-    if(!collect_glb_paths(GLTF_MODEL_DIR, &glb_paths, &glb_count))
+    if(!collect_glb_paths(BLOCKY_DIR, &glb_paths, &glb_count))
     {
         renderer_destroy(&renderer);
         return 1;
@@ -1082,7 +1083,11 @@ int main(void)
     while(!glfwWindowShouldClose(renderer.window))
     {
         TracyCFrameMark;
+if(glfwGetKey(renderer.window, GLFW_KEY_1) == GLFW_PRESS)
+    collect_glb_paths(PETS_DIR, &glb_paths, &glb_count);
 
+if(glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS)
+    collect_glb_paths(BLOCKY_DIR, &glb_paths, &glb_count);
         double now_seconds         = glfwGetTime();
         float  frame_delta_seconds = (float)(now_seconds - prev_time_seconds);
         prev_time_seconds          = now_seconds;
