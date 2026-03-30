@@ -220,6 +220,16 @@ static bool collect_glb_paths(const char* dir_path, char*** out_paths, uint32_t*
     return true;
 }
 
+static void free_glb_paths(char** paths, uint32_t count)
+{
+    if(!paths)
+        return;
+
+    for(uint32_t i = 0; i < count; ++i)
+        free(paths[i]);
+    free(paths);
+}
+
 static void cycle_animation_clip(GltfSceneInstance* instance, int delta)
 {
     if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
@@ -666,6 +676,60 @@ static void gltf_gpu_model_destroy(GltfGpuModel* model)
     memset(model, 0, sizeof(*model));
 }
 
+static void destroy_scene_instances(GltfSceneInstance* instances, uint32_t loaded_count)
+{
+    if(!instances)
+        return;
+
+    for(uint32_t i = 0; i < loaded_count; ++i)
+        gltf_gpu_model_destroy(&instances[i].model);
+    free(instances);
+}
+
+static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfSceneInstance** out_instances, uint32_t* out_loaded_count)
+{
+    *out_instances    = NULL;
+    *out_loaded_count = 0;
+
+    if(!glb_paths || glb_count == 0)
+        return false;
+
+    GltfSceneInstance* instances = (GltfSceneInstance*)calloc(glb_count, sizeof(GltfSceneInstance));
+    if(!instances)
+        return false;
+
+    uint32_t loaded_count = 0;
+    for(uint32_t i = 0; i < glb_count; ++i)
+    {
+        if(!gltf_gpu_model_init(&instances[loaded_count].model, glb_paths[i]))
+            continue;
+
+        uint32_t col    = loaded_count % GRID_COLUMNS;
+        uint32_t row    = loaded_count / GRID_COLUMNS;
+        float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
+
+        instances[loaded_count].position[0] = (float)col * GRID_SPACING_X - 0.5f * grid_w;
+        instances[loaded_count].position[1] = 0.0f;
+        instances[loaded_count].position[2] = -(float)row * GRID_SPACING_Z;
+
+        instances[loaded_count].animation_index  = 0;
+        instances[loaded_count].animation_time   = 0.0f;
+        instances[loaded_count].animation_speed  = 1.0f;
+        instances[loaded_count].animation_paused = false;
+        ++loaded_count;
+    }
+
+    if(loaded_count == 0)
+    {
+        free(instances);
+        return false;
+    }
+
+    *out_instances    = instances;
+    *out_loaded_count = loaded_count;
+    return true;
+}
+
 static void gltf_gpu_model_upload_once(GltfGpuModel* model, VkCommandBuffer cmd)
 {
     if(model->uploaded)
@@ -1027,49 +1091,13 @@ int main(void)
         return 1;
     }
 
-    GltfSceneInstance* instances = (GltfSceneInstance*)calloc(glb_count, sizeof(GltfSceneInstance));
-    if(!instances)
+    GltfSceneInstance* instances    = NULL;
+    uint32_t           loaded_count = 0;
+    if(!build_scene_instances(glb_paths, glb_count, &instances, &loaded_count))
     {
-        for(uint32_t i = 0; i < glb_count; ++i)
-            free(glb_paths[i]);
-        free(glb_paths);
+        free_glb_paths(glb_paths, glb_count);
         renderer_destroy(&renderer);
         return 1;
-    }
-
-    uint32_t loaded_count = 0;
-    for(uint32_t i = 0; i < glb_count; ++i)
-    {
-        if(!gltf_gpu_model_init(&instances[loaded_count].model, glb_paths[i]))
-            continue;
-
-        uint32_t col    = loaded_count % GRID_COLUMNS;
-        uint32_t row    = loaded_count / GRID_COLUMNS;
-        float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
-
-        instances[loaded_count].position[0] = (float)col * GRID_SPACING_X - 0.5f * grid_w;
-        instances[loaded_count].position[1] = 0.0f;
-        instances[loaded_count].position[2] = -(float)row * GRID_SPACING_Z;
-        ++loaded_count;
-    }
-
-    for(uint32_t i = 0; i < glb_count; ++i)
-        free(glb_paths[i]);
-    free(glb_paths);
-
-    if(loaded_count == 0)
-    {
-        free(instances);
-        renderer_destroy(&renderer);
-        return 1;
-    }
-
-    for(uint32_t i = 0; i < loaded_count; ++i)
-    {
-        instances[i].animation_index  = 0;
-        instances[i].animation_time   = 0.0f;
-        instances[i].animation_speed  = 1.0f;
-        instances[i].animation_paused = false;
     }
 
     bool   prev_space        = false;
@@ -1078,16 +1106,14 @@ int main(void)
     bool   prev_r            = false;
     bool   prev_up           = false;
     bool   prev_down         = false;
+    bool   prev_m            = false;
+    bool   prev_k            = false;
     double prev_time_seconds = glfwGetTime();
 
     while(!glfwWindowShouldClose(renderer.window))
     {
         TracyCFrameMark;
-if(glfwGetKey(renderer.window, GLFW_KEY_1) == GLFW_PRESS)
-    collect_glb_paths(PETS_DIR, &glb_paths, &glb_count);
 
-if(glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS)
-    collect_glb_paths(BLOCKY_DIR, &glb_paths, &glb_count);
         double now_seconds         = glfwGetTime();
         float  frame_delta_seconds = (float)(now_seconds - prev_time_seconds);
         prev_time_seconds          = now_seconds;
@@ -1101,6 +1127,33 @@ if(glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS)
         bool key_r     = glfwGetKey(renderer.window, GLFW_KEY_R) == GLFW_PRESS;
         bool key_up    = glfwGetKey(renderer.window, GLFW_KEY_UP) == GLFW_PRESS;
         bool key_down  = glfwGetKey(renderer.window, GLFW_KEY_DOWN) == GLFW_PRESS;
+        bool key_m     = glfwGetKey(renderer.window, GLFW_KEY_1) == GLFW_PRESS;
+        bool key_k     = glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS;
+
+        if((key_m && !prev_m) || (key_k && !prev_k))
+        {
+            const char* model_dir = key_m ? PETS_DIR : BLOCKY_DIR;
+            char**   next_paths = NULL;
+            uint32_t next_count = 0;
+            if(collect_glb_paths(model_dir, &next_paths, &next_count))
+            {
+                GltfSceneInstance* next_instances    = NULL;
+                uint32_t           next_loaded_count = 0;
+                if(build_scene_instances(next_paths, next_count, &next_instances, &next_loaded_count))
+                {
+                    destroy_scene_instances(instances, loaded_count);
+                    free_glb_paths(glb_paths, glb_count);
+                    instances    = next_instances;
+                    loaded_count = next_loaded_count;
+                    glb_paths    = next_paths;
+                    glb_count    = next_count;
+                }
+                else
+                {
+                    free_glb_paths(next_paths, next_count);
+                }
+            }
+        }
 
         if(key_space && !prev_space)
         {
@@ -1145,6 +1198,8 @@ if(glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS)
         prev_r     = key_r;
         prev_up    = key_up;
         prev_down  = key_down;
+        prev_m     = key_m;
+        prev_k     = key_k;
 
         for(uint32_t i = 0; i < loaded_count; ++i)
             update_animation_time(&instances[i], frame_delta_seconds);
@@ -1308,9 +1363,8 @@ if(glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS)
         }
     }
 
-    for(uint32_t i = 0; i < loaded_count; ++i)
-        gltf_gpu_model_destroy(&instances[i].model);
-    free(instances);
+    destroy_scene_instances(instances, loaded_count);
+    free_glb_paths(glb_paths, glb_count);
 
     renderer_destroy(&renderer);
     return 0;
