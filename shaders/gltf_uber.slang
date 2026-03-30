@@ -149,7 +149,7 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
         snorm_decode(v2 >> 20, 10)
     ));
 
-    float2 uv = float2(float(tu) / 65535.0, float(tv) / 65535.0);
+    float2 uv = float2(half_to_float(tu), half_to_float(tv));
 
     float4 world = mul(draw.model, float4(p, 1.0));
     float3 world_n = n;

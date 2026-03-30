@@ -61,8 +61,8 @@ MU_INLINE PackedVertex mu_pack_vertex(float px, float py, float pz, float nx, fl
 
     pv.tp = ((uint16_t)(qtx & 255) << 8) | ((uint16_t)(qty & 255));
 
-    pv.tu = (uint16_t)mu_quantize_unorm(u, 16);
-    pv.tv = (uint16_t)mu_quantize_unorm(v, 16);
+    pv.tu = mu_quantize_half(u);
+    pv.tv = mu_quantize_half(v);
 
     return pv;
 }
@@ -1019,6 +1019,7 @@ int main(void)
 
     char**   glb_paths = NULL;
     uint32_t glb_count = 0;
+
     if(!collect_glb_paths(GLTF_MODEL_DIR, &glb_paths, &glb_count))
     {
         renderer_destroy(&renderer);
