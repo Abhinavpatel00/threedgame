@@ -1,7 +1,7 @@
 #include "renderer.h"
 
 
-PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint32_t sampler_id;
+PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint32_t depth_texture_id; uint32_t sampler_id;
 
               uint32_t width;
 
@@ -13,6 +13,10 @@ PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint3
               ;
 
               float exposure;
+              uint32_t dof_enabled;
+              float    dof_focus_depth;
+              float    dof_focus_range;
+              float    dof_max_blur_radius;
 
 );
 PUSH_CONSTANT(EdgePush, uint32_t texture_id; uint32_t sampler_id;);
@@ -33,6 +37,10 @@ void            post_pass()
     {
         rt_transition_all(cmd, &renderer.hdr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_GENERAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        rt_transition_all(cmd, &renderer.depth[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.ldr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_GENERAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
         flush_barriers(cmd);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.postprocess]);
@@ -40,12 +48,17 @@ void            post_pass()
         PostPush pp_push        = {0};
         pp_push.src_texture_id  = renderer.hdr_color[renderer.swapchain.current_image].bindless_index;
         pp_push.output_image_id = renderer.ldr_color[renderer.swapchain.current_image].bindless_index;
+        pp_push.depth_texture_id = renderer.depth[renderer.swapchain.current_image].bindless_index;
         pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
         pp_push.width           = renderer.swapchain.extent.width;
         pp_push.height          = renderer.swapchain.extent.height;
         pp_push.frame           = pp_frame_counter++;
 
-        pp_push.exposure = 1.2;
+        pp_push.exposure          = 1.2f;
+        pp_push.dof_enabled       = 1;
+        pp_push.dof_focus_depth   = 0.020f;
+        pp_push.dof_focus_range   = 0.015f;
+        pp_push.dof_max_blur_radius = 6.0f;
         vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PostPush), &pp_push);
 
         uint32_t gx = (pp_push.width + 15) / 16;

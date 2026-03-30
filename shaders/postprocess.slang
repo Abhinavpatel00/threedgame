@@ -1,77 +1,23 @@
 import tonemapping;
 
-//===========================================================
-// Push constant layout — must match C side exactly
-//===========================================================
 struct PostPush
 {
-  // resource IDs
   uint src_texture_id;
   uint output_image_id;
+  uint depth_texture_id;
   uint sampler_id;
 
-  // resolution
   uint width;
   uint height;
 
   uint  frame;
   float exposure;
-  // effect enable flags (bitfield)
-  uint flags;
-
-  // tonemap selection: 0=neutral 1=aces 2=reinhard 3=reinhard2 4=filmic 5=uncharted2 6=unreal
-  uint tonemap_mode;
-
-  // core
-  float gamma_value;
-
-  // color grading
-  float contrast;
-  float saturation;
-  float temperature;  // white-balance: negative=cool, positive=warm
-  float tint;         // white-balance: green-magenta axis
-
-  // spatial
-  float vignette_intensity;
-  float vignette_smoothness;
-  float sharpen_strength;
-  float ca_strength;  // chromatic-aberration
-
-  // noise / output
-  float grain_intensity;
-  float sepia_intensity;
-  float dither_strength;
-
-  // lift / gain (shadows / highlights color wheels)
-  float lift_r;
-  float lift_g;
-  float lift_b;
-  float gain_r;
-  float gain_g;
-  float gain_b;
+  uint  dof_enabled;
+  float dof_focus_depth;
+  float dof_focus_range;
+  float dof_max_blur_radius;
 };
 
-//===========================================================
-// Flag bits
-//===========================================================
-static const uint FLAG_EXPOSURE      = (1u << 0);
-static const uint FLAG_TONEMAP       = (1u << 1);
-static const uint FLAG_GAMMA         = (1u << 2);
-static const uint FLAG_CONTRAST      = (1u << 3);
-static const uint FLAG_SATURATION    = (1u << 4);
-static const uint FLAG_WHITE_BALANCE = (1u << 5);
-static const uint FLAG_VIGNETTE      = (1u << 6);
-static const uint FLAG_GRAIN         = (1u << 7);
-static const uint FLAG_SHARPEN       = (1u << 8);
-static const uint FLAG_CA            = (1u << 9);
-static const uint FLAG_DITHER        = (1u << 10);
-static const uint FLAG_SEPIA         = (1u << 11);
-static const uint FLAG_LIFT_GAIN     = (1u << 12);
-
-bool has_flag(uint flags, uint bit)
-{
-  return (flags & bit) != 0;
-}
 #define SLANG_DEFAULT(x) = (x)
 __intrinsic_op(cmpGT) public vector<bool, N> greaterThan<T, let N : int>(vector<T, N> x, vector<T, N> y);
 
@@ -120,9 +66,6 @@ inline float3 tonemapACES(float3 color)
 }
 
 
-//===========================================================
-// Bindless resources
-//===========================================================
 [[vk::push_constant]]
 PostPush push;
 
@@ -135,6 +78,80 @@ SamplerState samplers[];
 [[vk::binding(2, 0)]]
 RWTexture2D<float4> storage_images[];
 
+float saturate(float x)
+{
+  return clamp(x, 0.0f, 1.0f);
+}
+
+float3 load_clamped(Texture2D tex, int2 p)
+{
+  int2 max_p = int2((int)push.width - 1, (int)push.height - 1);
+  int2 cp    = clamp(p, int2(0, 0), max_p);
+  return tex.Load(int3(cp, 0)).rgb;
+}
+
+float load_depth_clamped(Texture2D tex, int2 p)
+{
+  int2 max_p = int2((int)push.width - 1, (int)push.height - 1);
+  int2 cp    = clamp(p, int2(0, 0), max_p);
+  return tex.Load(int3(cp, 0)).r;
+}
+
+float compute_coc(float depth_raw)
+{
+  float coc = abs(depth_raw - push.dof_focus_depth) / max(push.dof_focus_range, 1e-5f);
+  coc       = saturate(coc);
+  coc       = coc * coc;
+  return coc;
+}
+
+float3 apply_dof(Texture2D src, Texture2D depth_tex, int2 pix)
+{
+  float3 center = load_clamped(src, pix);
+  if(push.dof_enabled == 0)
+    return center;
+
+  float center_depth = load_depth_clamped(depth_tex, pix);
+  float center_coc   = compute_coc(center_depth);
+  float radius       = center_coc * push.dof_max_blur_radius;
+  if(radius < 0.75f)
+    return center;
+
+  static const int TAP_COUNT = 16;
+  static const float2 POISSON[TAP_COUNT] = {
+    float2(-0.6134f,  0.6175f), float2( 0.1700f, -0.0402f), float2(-0.2994f, -0.4217f), float2( 0.6457f,  0.4932f),
+    float2(-0.0254f, -0.7689f), float2( 0.4812f, -0.5418f), float2(-0.7682f, -0.1489f), float2( 0.7705f, -0.2136f),
+    float2( 0.0313f,  0.8656f), float2(-0.4663f,  0.1832f), float2( 0.3191f,  0.2897f), float2(-0.1960f, -0.1638f),
+    float2( 0.0740f, -0.3245f), float2( 0.4021f,  0.0172f), float2(-0.1207f,  0.4208f), float2(-0.4098f, -0.6490f)
+  };
+
+  float3 sum  = center;
+  float  wsum = 1.0f;
+
+  [unroll]
+  for(int i = 0; i < TAP_COUNT; ++i)
+  {
+    float2 ofs = POISSON[i] * radius;
+    int2   sp  = pix + int2(round(ofs.x), round(ofs.y));
+
+    float3 sample_col   = load_clamped(src, sp);
+    float  sample_depth = load_depth_clamped(depth_tex, sp);
+    float  sample_coc   = compute_coc(sample_depth);
+
+    float depth_diff       = abs(sample_depth - center_depth);
+    float depth_similarity = exp(-depth_diff * 300.0f);
+    float coc_weight       = lerp(0.25f, 1.0f, max(center_coc, sample_coc));
+    float w                = depth_similarity * coc_weight;
+
+    sum += sample_col * w;
+    wsum += w;
+  }
+
+  float3 blurred  = sum / max(wsum, 1.0f);
+  float  blur_mix = smoothstep(0.05f, 1.0f, center_coc);
+  return lerp(center, blurred, blur_mix);
+}
+
 [numthreads(16, 16, 1)]
 void cs_main(uint3 id: SV_DispatchThreadID)
 {
@@ -144,9 +161,10 @@ void cs_main(uint3 id: SV_DispatchThreadID)
   int2 pix = int2(id.xy);
 
   Texture2D           src = textures[push.src_texture_id];
+  Texture2D           depth_tex = textures[push.depth_texture_id];
   RWTexture2D<float4> dst = storage_images[push.output_image_id];
 
-float3 color = src.Load(int3(pix, 0)).rgb;
+float3 color = apply_dof(src, depth_tex, pix);
 
 // exposure control
 color *= exp2(push.exposure);
