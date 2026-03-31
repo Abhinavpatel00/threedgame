@@ -1427,8 +1427,8 @@ void renderer_create(Renderer* r, RendererDesc* desc)
 
     RenderTargetSpec bloom_specs[BLOOM_MIPS] = {0};
     {
-        uint32_t bloom_w = MAX(1u, r->swapchain.extent.width / 2);
-        uint32_t bloom_h = MAX(1u, r->swapchain.extent.height / 2);
+        uint32_t bloom_w = r->swapchain.extent.width;
+        uint32_t bloom_h = r->swapchain.extent.height;
         for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
         {
             bloom_specs[mip] = (RenderTargetSpec){
@@ -1436,7 +1436,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                 .height     = bloom_h,
                 .layers     = 1,
                 .format     = hdr_format,
-                .usage      = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .usage      = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
                 .mip_count  = 1,
                 .debug_name = "bloom_chain",

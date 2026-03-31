@@ -255,8 +255,6 @@ FSOutput fs_main(VSOutput i)
     float3 color = diffuse + specular + fill + emissive;
     o.color = float4(color, base_color.a);
 
-    float3 n01 = normalize(i.normal) * 0.5 + 0.5;
-    float depth01 = saturate(i.position.z);
-    o.toon_data = float4(n01.xy, depth01, float(i.object_id));
+    o.toon_data = (i.object_id == 1u) ? float4(max(color * 2.0, 0.0.xxx), 1.0) : float4(0.0, 0.0, 0.0, 1.0);
     return o;
 }

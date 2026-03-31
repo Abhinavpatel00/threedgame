@@ -1227,6 +1227,10 @@ int main(void)
                 rt_transition_all(cmd, &renderer.hdr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
+                rt_transition_all(cmd, &renderer.bloom_chain[renderer.swapchain.current_image][0],
+                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
                 image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_GENERAL,
                                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
                 flush_barriers(cmd);
@@ -1248,16 +1252,16 @@ int main(void)
                 .clearValue.color = {{0.10f, 0.12f, 0.15f, 1.0f}},
             };
 
-            // VkRenderingAttachmentInfo toon_data = {
-            //     .sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            //     .imageView        = renderer.toon_data[renderer.swapchain.current_image].view,
-            //     .imageLayout      = renderer.toon_data[renderer.swapchain.current_image].mip_states[0].layout,
-            //     .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            //     .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
-            //     .clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}},
-            // };
-            //
-            VkRenderingAttachmentInfo colors[1] = {color};
+            VkRenderingAttachmentInfo bloom_src = {
+                .sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView        = renderer.bloom_chain[renderer.swapchain.current_image][0].view,
+                .imageLayout      = renderer.bloom_chain[renderer.swapchain.current_image][0].mip_states[0].layout,
+                .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
+                .clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+            };
+
+            VkRenderingAttachmentInfo colors[2] = {color, bloom_src};
 
             VkRenderingAttachmentInfo depth = {
                 .sType                   = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1272,7 +1276,7 @@ int main(void)
                 .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
                 .renderArea.extent    = renderer.swapchain.extent,
                 .layerCount           = 1,
-                .colorAttachmentCount = 1,
+                .colorAttachmentCount = 2,
                 .pColorAttachments    = colors,
                 .pDepthAttachment     = &depth,
             };
