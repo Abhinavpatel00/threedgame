@@ -1,27 +1,38 @@
 #include "renderer.h"
+#include "passes.h"
 
 
-PUSH_CONSTANT(PostPush, uint32_t src_texture_id; uint32_t output_image_id; uint32_t depth_texture_id; uint32_t sampler_id;
-
-              uint32_t bloom_texture_id;
-              float bloom_intensity;
-
+PUSH_CONSTANT(DofPreparePush,
+              uint32_t src_texture_id;
+              uint32_t depth_texture_id;
+              uint32_t output_image_id;
+              uint32_t sampler_id;
               uint32_t width;
-
-
               uint32_t height;
-
-              uint frame
-
-              ;
-
-              float exposure;
+              uint32_t out_width;
+              uint32_t out_height;
               uint32_t dof_enabled;
-              float    dof_focus_depth;
-              float    dof_focus_range;
-              float    dof_max_blur_radius;
+              float    dof_focus_point;
+              float    dof_focus_scale;
+              float    dof_far_plane;);
 
-);
+PUSH_CONSTANT(PostPush,
+              uint32_t src_texture_id;
+              uint32_t dof_texture_id;
+              uint32_t output_image_id;
+              uint32_t sampler_id;
+              uint32_t bloom_texture_id;
+              float    bloom_intensity;
+              uint32_t width;
+              uint32_t height;
+              uint32_t half_width;
+              uint32_t half_height;
+              uint32_t dof_enabled;
+              float    exposure;
+              uint32_t frame;
+              float    dof_max_blur_size;
+              float    dof_rad_scale;
+              float    pad0;);
 
 PUSH_CONSTANT(BloomDownPush,
               uint32_t src_texture_id;
@@ -58,6 +69,17 @@ PUSH_CONSTANT(ToonOutlinePush,
 
 
 static uint32_t pp_frame_counter = 0;
+
+PostFxSettings g_postfx_settings = {
+    .dof_enabled       = 1u,
+    .exposure          = 1.2f,
+    .bloom_intensity   = 0.66f,
+    .dof_focus_point   = 16.0f,
+    .dof_focus_scale   = 8.0f,
+    .dof_far_plane     = 300.0f,
+    .dof_max_blur_size = 20.0f,
+    .dof_rad_scale     = 0.5f,
+};
 
 void pass_toon_outline()
 {
@@ -200,16 +222,52 @@ void            post_pass()
     VkCommandBuffer cmd        = renderer.frames[renderer.current_frame].cmdbuf;
     GpuProfiler*    frame_prof = &renderer.gpuprofiler[renderer.current_frame];
     uint32_t current_image = renderer.swapchain.current_image;
+    uint32_t half_w = MAX(1u, renderer.swapchain.extent.width / 2);
+    uint32_t half_h = MAX(1u, renderer.swapchain.extent.height / 2);
 
     pass_bloom(current_image);
+
+    GPU_SCOPE(frame_prof, cmd, "DOF_PREPARE", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
+    {
+        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.depth[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.dof_half[current_image], VK_IMAGE_LAYOUT_GENERAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+
+        flush_barriers(cmd);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.dof_prepare]);
+
+        DofPreparePush prep_push  = {0};
+        prep_push.src_texture_id  = renderer.hdr_color[current_image].bindless_index;
+        prep_push.depth_texture_id = renderer.depth[current_image].bindless_index;
+        prep_push.output_image_id = renderer.dof_half[current_image].bindless_index;
+        prep_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
+        prep_push.width           = renderer.swapchain.extent.width;
+        prep_push.height          = renderer.swapchain.extent.height;
+        prep_push.out_width       = half_w;
+        prep_push.out_height      = half_h;
+        prep_push.dof_enabled     = g_postfx_settings.dof_enabled;
+        prep_push.dof_focus_point = g_postfx_settings.dof_focus_point;
+        prep_push.dof_focus_scale = g_postfx_settings.dof_focus_scale;
+        prep_push.dof_far_plane   = g_postfx_settings.dof_far_plane;
+
+        vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(DofPreparePush), &prep_push);
+
+        uint32_t gx = (half_w + 15) / 16;
+        uint32_t gy = (half_h + 15) / 16;
+        vkCmdDispatch(cmd, gx, gy, 1);
+    }
 
     GPU_SCOPE(frame_prof, cmd, "POST", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
     {
         rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        rt_transition_all(cmd, &renderer.bloom_chain[current_image][0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        rt_transition_all(cmd, &renderer.dof_half[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        rt_transition_all(cmd, &renderer.depth[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        rt_transition_all(cmd, &renderer.bloom_chain[current_image][0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.ldr_color[current_image], VK_IMAGE_LAYOUT_GENERAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -219,26 +277,24 @@ void            post_pass()
 
         PostPush pp_push        = {0};
         pp_push.src_texture_id   = renderer.hdr_color[current_image].bindless_index;
+        pp_push.dof_texture_id   = renderer.dof_half[current_image].bindless_index;
         pp_push.output_image_id  = renderer.ldr_color[current_image].bindless_index;
-        pp_push.depth_texture_id = renderer.depth[current_image].bindless_index;
         pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
         pp_push.bloom_texture_id = renderer.bloom_chain[current_image][0].bindless_index;
-        pp_push.bloom_intensity  = 0.66f;
+        pp_push.bloom_intensity  = g_postfx_settings.bloom_intensity;
         pp_push.width           = renderer.swapchain.extent.width;
         pp_push.height          = renderer.swapchain.extent.height;
+        pp_push.half_width      = half_w;
+        pp_push.half_height     = half_h;
+        pp_push.dof_enabled     = g_postfx_settings.dof_enabled;
+        pp_push.exposure        = g_postfx_settings.exposure;
         pp_push.frame           = pp_frame_counter++;
-
-        pp_push.exposure          = 1.2f;
-        pp_push.dof_enabled       = 1;
-        pp_push.dof_focus_depth   = 0.020f;
-        pp_push.dof_focus_range   = 0.015f;
-        pp_push.dof_max_blur_radius = 6.0f;
+        pp_push.dof_max_blur_size = g_postfx_settings.dof_max_blur_size;
+        pp_push.dof_rad_scale     = g_postfx_settings.dof_rad_scale;
         vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PostPush), &pp_push);
 
-        uint32_t gx = (pp_push.width + 15) / 16;
-        uint32_t gy = (pp_push.height + 15) / 16;
-
-
+        uint32_t gx = (renderer.swapchain.extent.width + 15) / 16;
+        uint32_t gy = (renderer.swapchain.extent.height + 15) / 16;
         vkCmdDispatch(cmd, gx, gy, 1);
     }
 }

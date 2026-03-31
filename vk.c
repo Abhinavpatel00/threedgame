@@ -1235,6 +1235,14 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                                    .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                    .descriptorCount = desc->bindless_storage_image_count,
                                                    .stageFlags      = VK_SHADER_STAGE_ALL,
+                                               },
+
+                                               // global frame data ubo
+                                               {
+                                                   .binding         = BINDLESS_GLOBAL_UBO_BINDING,
+                                                   .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                   .descriptorCount = 1,
+                                                   .stageFlags      = VK_SHADER_STAGE_ALL,
                                                }};
     VkDescriptorBindingFlags     flags[ARRAY_COUNT(bindings)];
 
@@ -1265,6 +1273,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, desc->bindless_sampled_image_count},
         {VK_DESCRIPTOR_TYPE_SAMPLER, desc->bindless_sampler_count},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, desc->bindless_storage_image_count},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo cib = {
         .sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -1407,6 +1416,16 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                    .mip_count  = 1,
                                    .debug_name = "hdr_color"};
+    RenderTargetSpec dof_half_spec = {
+        .width      = MAX(1u, r->swapchain.extent.width / 2),
+        .height     = MAX(1u, r->swapchain.extent.height / 2),
+        .layers     = 1,
+        .format     = hdr_format,
+        .usage      = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .mip_count  = 1,
+        .debug_name = "dof_half",
+    };
     RenderTargetSpec ldr_spec   = {.width  = r->swapchain.extent.width,
                                    .height = r->swapchain.extent.height,
                                    .layers = 1,
@@ -1649,6 +1668,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
     {
         rt_create(r, &r->depth[i], &depth_spec);
         rt_create(r, &r->hdr_color[i], &hdr_spec);
+        rt_create(r, &r->dof_half[i], &dof_half_spec);
         rt_create(r, &r->ldr_color[i], &ldr_spec);
         for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
         {

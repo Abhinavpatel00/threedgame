@@ -1,13 +1,11 @@
+#include "common_bindless.slang"
+
 struct Push
 {
     uint64_t draw_data_ptr;
     uint64_t skin_mats_ptr;
     uint64_t mat_ptr;
     uint _pad0;
-
-    float4x4 view_proj;
-    float3 camera_pos;
-    uint _pad1;
 };
 
 struct DrawData
@@ -108,12 +106,6 @@ float snorm_decode(uint v, uint bits)
     return clamp(float(sv) / maxv, -1.0, 1.0);
 }
 
-[[vk::binding(0, 0)]]
-Texture2D textures[];
-
-[[vk::binding(1, 0)]]
-SamplerState samplers[];
-
 [[vk::push_constant]]
 Push push;
 
@@ -200,7 +192,7 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, u
 
     float3x3 nrm_mat = (float3x3)draw.model;
 
-    o.position = mul(push.view_proj, world);
+    o.position = mul(global_ubo.viewproj, world);
     o.world_pos = world.xyz;
     o.normal = ((draw.flags & 0x4) != 0) ? world_n : normalize(mul(nrm_mat, n));
     o.uv = uv;
@@ -233,7 +225,7 @@ FSOutput fs_main(VSOutput i)
 
     float3 normal = normalize(i.normal);
     float3 L = normalize(float3(0.5, 0.9, 0.25));
-    float3 V = normalize(-i.world_pos);
+    float3 V = normalize(global_ubo.camera_pos.xyz - i.world_pos);
     float3 H = normalize(L + V);
 
     float ndotl = max(dot(normal, L), 0.0);

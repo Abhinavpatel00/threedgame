@@ -54,6 +54,7 @@ typedef struct VkPhysicalDeviceShaderNonSemanticInfoFeaturesKHR
 #define BINDLESS_TEXTURE_BINDING 0
 #define BINDLESS_SAMPLER_BINDING 1
 #define BINDLESS_STORAGE_IMAGE_BINDING 2
+#define BINDLESS_GLOBAL_UBO_BINDING 3
 #define MAX_MIPS 16
 #define MAX_SWAPCHAIN_IMAGES 8
 
@@ -461,6 +462,7 @@ Frustum frustum;
     // render targets (BIG = cold)
     RenderTarget depth[MAX_SWAPCHAIN_IMAGES];
     RenderTarget hdr_color[MAX_SWAPCHAIN_IMAGES];
+    RenderTarget dof_half[MAX_SWAPCHAIN_IMAGES];
     RenderTarget ldr_color[MAX_SWAPCHAIN_IMAGES];
     RenderTarget bloom_chain[MAX_SWAPCHAIN_IMAGES][BLOOM_MIPS];
     RenderTarget smaa_edges[MAX_SWAPCHAIN_IMAGES];
@@ -1381,6 +1383,7 @@ static MU_INLINE void frame_start(Renderer* renderer, Camera* cam)
             rt_resize(renderer, &renderer->depth[i], fb_w, fb_h);
 
             rt_resize(renderer, &renderer->hdr_color[i], fb_w, fb_h);
+            rt_resize(renderer, &renderer->dof_half[i], MAX(1u, fb_w / 2), MAX(1u, fb_h / 2));
             rt_resize(renderer, &renderer->ldr_color[i], fb_w, fb_h);
         }
 
@@ -1396,6 +1399,67 @@ static MU_INLINE void frame_start(Renderer* renderer, Camera* cam)
 
         camera_update_matrices(cam, aspect, true);
         camera_extract_frustum(&renderer->frustum, cam->view_proj);
+    }
+
+    {
+        static uint32_t s_global_frame_count = 0;
+        GlobalData      global_data          = {0};
+
+        glm_mat4_identity(global_data.view);
+        glm_mat4_identity(global_data.projection);
+        glm_mat4_identity(global_data.viewproj);
+        glm_mat4_identity(global_data.inv_view);
+        glm_mat4_identity(global_data.inv_projection);
+        glm_mat4_identity(global_data.inv_viewproj);
+
+        if(cam)
+        {
+            glm_mat4_copy(cam->view, global_data.view);
+            glm_mat4_copy(cam->proj, global_data.projection);
+            glm_mat4_copy(cam->view_proj, global_data.viewproj);
+
+            glm_mat4_inv(cam->view, global_data.inv_view);
+            glm_mat4_inv(cam->proj, global_data.inv_projection);
+            glm_mat4_inv(cam->view_proj, global_data.inv_viewproj);
+
+            global_data.camera_pos[0] = cam->position[0];
+            global_data.camera_pos[1] = cam->position[1];
+            global_data.camera_pos[2] = cam->position[2];
+            global_data.camera_pos[3] = cam->fov_y;
+
+            global_data.camera_dir[0] = cam->cam_dir[0];
+            global_data.camera_dir[1] = cam->cam_dir[1];
+            global_data.camera_dir[2] = cam->cam_dir[2];
+            global_data.camera_dir[3] = (float)renderer->swapchain.extent.width
+                                        / (float)MAX(renderer->swapchain.extent.height, 1u);
+        }
+
+        global_data.time        = (float)((double)now * 1e-9);
+        global_data.delta_time  = renderer->dt;
+        global_data.frame_count = s_global_frame_count++;
+        global_data.pad         = 0;
+
+        Buffer* frame_ubo = &renderer->global_ubo[renderer->current_frame];
+        if(frame_ubo->mapping)
+            memcpy(frame_ubo->mapping, &global_data, sizeof(global_data));
+
+        VkDescriptorBufferInfo ubo_info = {
+            .buffer = frame_ubo->buffer,
+            .offset = 0,
+            .range  = sizeof(GlobalData),
+        };
+
+        VkWriteDescriptorSet write = {
+            .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet          = renderer->bindless_system.set,
+            .dstBinding      = BINDLESS_GLOBAL_UBO_BINDING,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pBufferInfo     = &ubo_info,
+        };
+
+        vkUpdateDescriptorSets(renderer->device, 1, &write, 0, NULL);
     }
 
     /* -------- frame sync -------- */
@@ -1521,7 +1585,6 @@ void pipeline_mark_dirty(const char* changed_shader);
 void pipeline_rebuild(Renderer* r);
 
 void pipeline_cache_save(VkDevice device, VkPhysicalDevice phys, VkPipelineCache cache, const char* path);
-
 
 
 

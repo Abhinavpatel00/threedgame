@@ -18,9 +18,7 @@
 static bool take_screenshot;
 
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;
-              float    view_proj[4][4];
-              float    camera_pos[3];
-              uint32_t _pad1;);
+              );
 
 typedef struct GltfIndirectDrawData
 {
@@ -1113,7 +1111,7 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
-static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGpuModel* model)
+static void draw_gltf_model(VkCommandBuffer cmd, const GltfGpuModel* model)
 {
     vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.gltf_minimal]);
@@ -1127,10 +1125,6 @@ static void draw_gltf_model(VkCommandBuffer cmd, const Camera* cam, const GltfGp
     push.skin_mats_ptr =
         model->skin_mats_slice.buffer != VK_NULL_HANDLE ? slice_device_address(&renderer, model->skin_mats_slice) : 0;
     push.mat_ptr = slice_device_address(&renderer, model->material_slice);
-    memcpy(push.view_proj, cam->view_proj, sizeof(push.view_proj));
-    push.camera_pos[0] = cam->position[0];
-    push.camera_pos[1] = cam->position[1];
-    push.camera_pos[2] = cam->position[2];
 
     vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(GltfUberPush), &push);
 
@@ -1350,7 +1344,7 @@ int main(void)
             {
                 vkCmdBeginRendering(cmd, &rendering);
                 for(uint32_t i = 0; i < loaded_count; ++i)
-                    draw_gltf_model(cmd, &cam, &instances[i].model);
+                    draw_gltf_model(cmd, &instances[i].model);
                 vkCmdEndRendering(cmd);
             }
 
@@ -1404,6 +1398,22 @@ int main(void)
                                (unsigned long long)pass->fs_invocations, (unsigned long long)pass->primitives);
                     }
                 }
+
+                igSeparator();
+                igText("Post FX");
+
+                bool dof_enabled = g_postfx_settings.dof_enabled != 0u;
+                if(igCheckbox("DoF Enabled", &dof_enabled))
+                    g_postfx_settings.dof_enabled = dof_enabled ? 1u : 0u;
+
+                igSliderFloat("Exposure", &g_postfx_settings.exposure, -4.0f, 4.0f, "%.2f", 0);
+                igSliderFloat("Bloom Intensity", &g_postfx_settings.bloom_intensity, 0.0f, 2.5f, "%.2f", 0);
+
+                igSliderFloat("DoF Focus Point", &g_postfx_settings.dof_focus_point, 0.01f, 200.0f, "%.2f", 0);
+                igSliderFloat("DoF Focus Scale", &g_postfx_settings.dof_focus_scale, 0.1f, 32.0f, "%.2f", 0);
+                igSliderFloat("DoF Far Plane", &g_postfx_settings.dof_far_plane, 10.0f, 2000.0f, "%.1f", 0);
+                igSliderFloat("DoF Max Blur", &g_postfx_settings.dof_max_blur_size, 1.0f, 40.0f, "%.2f", 0);
+                igSliderFloat("DoF Radius Scale", &g_postfx_settings.dof_rad_scale, 0.05f, 2.0f, "%.3f", 0);
 
                 igEnd();
                 igRender();

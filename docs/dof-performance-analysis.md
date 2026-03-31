@@ -5,238 +5,237 @@ Workspace: `threedgame`
 
 ## Scope
 
-This document analyzes why depth of field is expensive in two places in this workspace:
+This document analyzes why DOF is expensive in:
 
-1. **Bevy post-process bokeh/gaussian DOF path** (`bevy/crates/bevy_post_process/src/dof/*`)
-2. **Current engine DOF shader path** (`shaders/postprocess.slang` + `passes.c`)
+1. `BokehDepthOfField/src/29_DepthOfField/Shaders/Vulkan` (reference implementation)
+2. Your current engine path (`shaders/postprocess.slang` + `passes.c`)
 
-The analysis is static (code-path and complexity driven), with practical performance estimates and optimization priorities.
-
----
+It is a code-path and complexity analysis (no live GPU capture attached here), with concrete bottlenecks and optimization priorities.
 
 ## Executive Summary
 
-Depth of field is expensive here mainly because:
+Main reasons DOF is slow in your project:
 
-- **Your current DOF is full-resolution gather blur** in a single compute pass.
-- It does **many texture reads per pixel** (color + depth taps), plus expensive transcendental math (`exp`, `pow` via tonemapping, etc.).
-- DOF is **always enabled** and uses aggressive focus settings, so many pixels likely take the expensive path.
-- Bevy’s bokeh path is visually better but also costly due to **multi-pass blur + variable kernel support**, and can become bandwidth-heavy when CoC grows.
+1. Your current DOF is a full-resolution gather blur in one compute pass with many depth+color fetches per blurred pixel.
+2. DOF is hard-enabled with aggressive focus values, so a large screen area likely enters expensive blur.
+3. The reference BokehDepthOfField Vulkan paths are also expensive by design (multi-pass + many fullscreen barriers + heavy kernels), but they amortize cost by doing core blur work at half resolution.
+4. There are likely implementation issues in the reference Vulkan sample that can hurt quality/perf on non-square targets.
 
-If the goal is immediate speedup with minimal visual impact, the highest ROI is:
+Highest-ROI fix for your engine: move DOF blur to half resolution with adaptive tap count.
 
-1. Move DOF to **half-resolution** (or variable resolution).
-2. Build a **CoC prepass** and sample CoC instead of recomputing from depth repeatedly.
-3. Add **adaptive tap count** + radius budget.
-4. Keep bokeh quality for captures; use gaussian/adaptive for gameplay.
+## Part A: Your Current DOF (`shaders/postprocess.slang`)
 
----
+### A.1 Pipeline location
 
-## Part A — Bevy `BokehDepthOfField` Path
+- DOF executes inside `post_pass()` in `passes.c` after bloom.
+- The compute dispatch is full swapchain size.
+- DOF is always enabled and fused with bloom-combine + exposure + tone mapping.
 
-### A.1 Pipeline structure and pass count
+Key settings from `passes.c`:
 
-Relevant files:
+- `dof_enabled = 1`
+- `dof_focus_depth = 0.020f`
+- `dof_focus_range = 0.015f`
+- `dof_max_blur_radius = 6.0f`
 
-- `bevy/crates/bevy_post_process/src/dof/dof.wgsl`
-- `bevy/crates/bevy_post_process/src/dof/mod.rs`
+These settings are narrow enough that many pixels can be out-of-focus.
 
-Bevy implements two modes:
+### A.2 Shader cost model
 
-- **Gaussian mode**: 2 fullscreen passes
-  - Horizontal blur
-  - Vertical blur
-- **Bokeh mode**: 2 fullscreen passes
-  - Pass 0: vertical + diagonal (dual render target output)
-  - Pass 1: diagonal + diagonal blend (dual input)
+In `apply_dof()`:
 
-This is well-structured and renderer-friendly, but bokeh can still be expensive when CoC is large.
+- center sample: 1 color + 1 depth
+- if blurred: loop with `TAP_COUNT = 16`
+- each tap: 1 color + 1 depth + CoC math + depth weight math (`exp`)
+- outside loop: bloom sample + tone mapping math
 
-### A.2 Why bokeh can be expensive
+Approximate blurred-pixel read cost:
 
-In `dof.wgsl`, each pass computes CoC from depth and then executes directional box blurs with support:
+- DOF core: `1+1 + 16*(1+1) = 34` texture reads
+- bloom sample: `+1`
+- total: about `35` reads/pixel in blurred regions
 
-- `support = round(coc * 0.5)`
-- Loop runs from `0..support`
+Upper-bound read volume:
 
-For large CoC, sample count scales linearly per direction.
+- 1080p (2.07M px): ~72M reads/frame in this pass when blur coverage is high
+- 4K (8.29M px): ~290M reads/frame when blur coverage is high
 
-For max CoC diameter = 64 (default in `DepthOfField::default`):
+### A.3 Why it spikes frame time
 
-- `support ≈ 32` → **33 samples per directional blur**
-- Bokeh pass 0 has 2 directional blurs → ~66 color samples
-- Bokeh pass 1 has 2 directional blurs → ~66 color samples
-- Combined bokeh path: **~132 color samples/pixel** + depth/C0 overhead
+1. Full-resolution processing at final output size.
+2. Depth+color dual fetch per tap.
+3. Exponential weighting in inner loop.
+4. Blur eligibility can be broad due to narrow focus range.
+5. DOF, bloom add, and tone map are fused, so DOF cost is paid inside your final post pass every frame.
 
-Even with texture cache locality, this is substantial memory bandwidth and texture-unit pressure.
+## Part B: `BokehDepthOfField` Vulkan Shader Analysis
 
-### A.3 Why gaussian is cheaper than bokeh
+Reference files:
 
-`gaussian_blur.wgsl` uses a bilinear sampling trick (pairing adjacent taps), lowering fetch count for equivalent support.
-Still not free, but generally cheaper than bokeh and easier to scale.
+- `BokehDepthOfField/src/29_DepthOfField/Shaders/Vulkan/genCoc.frag`
+- `.../maxfilterNearCoC.frag`
+- `.../boxfilterNearCoC.frag`
+- `.../circular_dof/*`
+- `.../gather_based_dof/*`
+- `.../singlepass/dof.frag`
+- pass graph wiring in `BokehDepthOfField/src/29_DepthOfField/DepthOfField.cpp`
 
-### A.4 Bevy-side observations
+### B.1 Frame graph summary
 
-Strengths:
+Common steps:
 
-- Good pipeline specialization (`MULTISAMPLED`, `DUAL_INPUT`)
-- Explicit auxiliary RT allocation only for bokeh
-- Clear pass scheduling between bloom and tonemap
+1. Full-res scene render to HDR
+2. Full-res CoC generation (`genCoc.frag`)
 
-Costs:
+Then one of three methods:
 
-- Fullscreen multi-pass bandwidth
-- Per-pixel variable loop lengths
-- Repeated depth/CoC computations across passes
+1. Circular DOF
+2. Practical Gather Based
+3. Single Pass
 
----
+Default selection is `gSelectedMethod = 0` (Circular DOF).
 
-## Part B — Current Engine DOF (`postprocess.slang`)
+### B.2 Circular DOF path cost profile
 
-### B.1 Where cost happens
+Passes (after CoC generation):
 
-Relevant files:
+1. Downres to half-res (3 MRT)
+2. Near CoC max X
+3. Near CoC max Y
+4. Near CoC box X
+5. Near CoC box Y
+6. Horizontal pass (7 MRT outputs)
+7. Vertical + composite to swapchain
 
-- `shaders/postprocess.slang`
-- `passes.c` (`post_pass`)
+Performance characteristics:
 
-Current behavior:
+- Many fullscreen passes and barriers.
+- Near-CoC filtering alone is 4 passes with kernel radius 6 (13 taps/pass).
+- Horizontal stage writes 7 targets in one pass (bandwidth heavy).
+- Vertical stage does reconstruction with complex-kernel math and multiple source textures.
 
-- Full-resolution compute dispatch (`numthreads(16,16,1)` over full swapchain)
-- DOF is enabled in push constants (`dof_enabled = 1`)
-- Blur performed in `apply_dof()` with Poisson taps
+Why still feasible:
 
-### B.2 Per-pixel operation cost
+- Most heavy blur work is at half resolution.
 
-In heavy-blur regions (`radius >= 0.75`), per pixel does:
+### B.3 Practical Gather-Based path cost profile
 
-- Center reads:
-  - `1x` color read
-  - `1x` depth read
-- Loop (`TAP_COUNT = 16`):
-  - `16x` color reads
-  - `16x` depth reads
-  - math: `exp`, lerp, abs, max, smoothstep path
-- Post DOF:
-  - `1x` bloom sample
-  - exposure and ACES tonemap math
-  - output store
+Passes (after CoC generation):
 
-Approx total texture reads/pixel in blurred areas:
+1. Downres to half-res (3 MRT)
+2. Near CoC max X
+3. Near CoC max Y
+4. Near CoC box X
+5. Near CoC box Y
+6. Computation pass (near/far gather, many taps)
+7. Filling pass (3x3 morphological fill)
+8. Composite pass
 
-- **35 reads/pixel** (17 color + 17 depth + 1 bloom)
+Hotspots:
 
-At 1920×1080 (~2.07M pixels), worst-case upper bound is:
+- `computation.frag` has large static sampling sets (48 offsets + center for near and far paths).
+- Worst-case per half-res pixel in computation pass is very high (both near and far branches active).
 
-- ~72M texture reads/frame from this pass alone
+### B.4 Single-Pass path cost profile
 
-At 3840×2160 (~8.29M pixels):
+`singlepass/dof.frag` uses a golden-angle spiral loop:
 
-- ~290M texture reads/frame
+- `radius` starts at 1.5 and grows with `radius += RAD_SCALE / radius`.
+- Loop runs until `radius >= 20`.
+- Each iteration samples color + CoC.
 
-These are worst-case approximations, but they explain the frame cost trend very well.
+This can result in very high per-pixel sample counts, and it runs full-res.
 
-### B.3 Current parameter risk
+### B.5 Observed issues in reference Vulkan code
 
-In `passes.c`, DOF push values are currently fixed and aggressive:
+1. Near-CoC render target dimension bug:
+- In `DepthOfField.cpp`, near-CoC filter target height is set from width.
+- `rtDesc.mHeight = pRenderTargetCoCDowres[0]->mDesc.mWidth;`
+- Expected: use `mHeight`.
 
-- `dof_focus_depth = 0.020`
-- `dof_focus_range = 0.015`
-- `dof_max_blur_radius = 6.0`
+2. Filter step uses only width for both axes:
+- In `maxfilterNearCoC.frag` and `boxfilterNearCoC.frag`:
+- `vec2 step = vec2(1.0f / textureSize(...).r);`
+- Vertical pass should use independent x/y texel size, not width-derived scalar for both.
 
-With this narrow focus range, many pixels are likely out-of-focus, triggering expensive blur frequently.
+Impact:
 
-### B.4 Additional pipeline-level costs
+- Can distort kernel footprint for non-square targets.
+- Can introduce extra work and blur inconsistency.
 
-- `pass_bloom()` runs before `post_pass()`, so DOF runs after bloom down/up chain cost.
-- Several full-image transitions/barriers around postprocess stages increase scheduling and memory pressure.
-- DOF, bloom combine, tonemap are fused in one compute shader, which is convenient but reduces fine-grained quality/perf tuning.
+## Part C: Comparative Analysis (Reference vs Your Shader)
 
----
+### C.1 Why your current path is slow right now
 
-## Part C — Why it is slow (ranked bottlenecks)
+Compared to the reference multi-pass methods, your path is simpler but currently expensive because:
 
-1. **Full-res gather DOF** in `postprocess.slang` with 16 taps and depth-tested weighting.
-2. **Depth + color dual-sampling per tap**, causing high memory traffic.
-3. **Transcendental math** in inner loops (`exp`) and per-pixel tone mapping.
-4. **Always-on DOF** with narrow focus range (high blur coverage).
-5. **No CoC prepass / no tile culling / no dynamic quality scaling**.
+1. It is full-res for all DOF work.
+2. It performs per-tap depth fetch + CoC logic directly in the final pass.
+3. It is always active with aggressive focus settings.
 
----
+### C.2 Why reference path can still be expensive
 
-## Part D — Optimization Plan (highest impact first)
+Reference methods reduce blur resolution but add:
 
-## D.1 Immediate wins (low risk)
+1. More passes
+2. More barriers
+3. More intermediate render targets
+4. Complex kernels and reconstructions
 
-1. **Half-resolution DOF buffer**
-   - Run DOF on half-res color + half-res depth/CoC.
-   - Upsample/composite into final post pass.
-   - Typical gain: very large (often 2–4x for DOF stage).
+So reference is not “cheap by default”; it is quality-focused and requires tuning.
 
-2. **Adaptive tap budget**
-   - Reduce `TAP_COUNT` based on CoC or a quality tier.
-   - Example: CoC small → 4 taps, medium → 8 taps, large → 12/16.
+## Part D: Prioritized Optimization Plan for Your Engine
 
-3. **Runtime toggle/quality controls**
-   - Expose DOF enable + quality in UI.
-   - Avoid hardcoded always-on settings in shipping path.
+### D.1 Immediate changes (highest ROI)
 
-## D.2 Medium effort
+1. Half-res DOF path
+- Generate half-res CoC and half-res color input.
+- Run blur on half-res.
+- Composite into full-res final pass.
 
-4. **CoC prepass texture**
-   - Precompute CoC once (preferably half-res), sample CoC in blur shader.
-   - Removes repeated CoC math from every depth tap path.
+2. Adaptive taps
+- Use CoC/radius tiers, e.g. 4/8/12/16 taps.
+- Skip expensive path for tiny CoC.
 
-5. **Replace/approximate expensive `exp` weighting**
-   - Use cheaper polynomial/LUT approximation for depth similarity.
-   - Keeps edge behavior while cutting ALU cost.
+3. Runtime quality presets
+- Low: half-res + 4/8 taps
+- Medium: half-res + 8/12 taps
+- High: half-res + 12/16 taps
 
-6. **Far/near split with cheaper far blur**
-   - Separate near and far fields and process differently.
-   - Far field often tolerates more aggressive downsample.
+4. Relax focus defaults
+- Broaden focus range so fewer pixels trigger strong blur.
 
-## D.3 Advanced
+### D.2 Medium changes
 
-7. **Tile classification / foveated DOF work skipping**
-   - If max CoC in tile is below threshold, skip expensive kernel.
+1. CoC prepass texture
+- Precompute CoC once and sample it in DOF pass.
 
-8. **Temporal accumulation for DOF**
-   - Fewer taps per frame, accumulate over frames with reprojection.
+2. Cheaper depth similarity
+- Replace `exp()` in inner loop with cheaper approximation/LUT.
 
-9. **Dedicated bokeh pass graph (optional)**
-   - Split bloom, DOF, tonemap into distinct quality-scalable stages.
+3. Split DOF from tone-map path
+- Keep DOF in its own compute stage for easier profiling and quality scaling.
 
----
+### D.3 If you want Bokeh-style quality
 
-## Part E — Suggested profiling methodology
+1. Port a half-res near/far split (like reference circular/gather design).
+2. Keep full-res composite only.
+3. Avoid porting full complexity first; start with minimal 3-pass half-res architecture.
 
-You already have per-pass GPU scopes (`BLOOM`, `POST`, etc.). Use this process:
+## Part E: Measurement Plan
 
-1. Baseline current scene with DOF on.
-2. Disable DOF (`dof_enabled = 0`) and measure delta in `POST` pass.
-3. Keep DOF on, set radius to 0/2/4/6 and collect slope.
-4. Test 720p, 1080p, 1440p, 4K to verify pixel-scaling behavior.
-5. Separate bloom from DOF in timings (optional temporary split shader or marker).
+Use your existing GPU scopes and add sub-scope timing around DOF internals.
 
-Expected signature of a fill/bandwidth-limited DOF:
+1. Baseline with current settings.
+2. Toggle `dof_enabled` off to isolate delta.
+3. Sweep `dof_max_blur_radius` (0, 2, 4, 6).
+4. Sweep resolution (720p, 1080p, 1440p, 4K).
+5. After half-res DOF, re-run same sweep.
 
-- Cost scales near-linearly with pixel count and blur coverage.
+Expected signature of DOF bottleneck:
 
----
+- Cost scales approximately with pixel count and blur coverage.
 
-## Part F — Recommended target architecture for this project
+## Conclusion
 
-Given your existing bindless + push-constant model, practical next architecture:
-
-1. **Pass 1**: CoC generation at half-res (R16F or R8 where acceptable)
-2. **Pass 2**: Half-res DOF blur (adaptive taps)
-3. **Pass 3**: Composite DOF + HDR + bloom
-4. **Pass 4**: Tonemap (or keep tonemap fused with composite)
-
-This keeps your current renderer style and gives clear quality/perf knobs.
-
----
-
-## Quick Conclusion
-
-Your current DOF is expensive because it is a full-resolution gather blur with many depth/color reads and expensive weighting math per pixel. Bevy’s bokeh implementation is also inherently costly due to variable-support multi-pass blur, but your current shader is likely the larger immediate hotspot in this project because it is always-on and full-res in one pass. Moving DOF to half-res + adaptive tap count will produce the biggest near-term win.
+Your current DOF is expensive because it is a full-resolution gather blur with depth-aware weighting in the final post compute pass, and it is always enabled with aggressive focus parameters. The `BokehDepthOfField` Vulkan implementation is also expensive in raw work but contains an important design advantage: heavy blur stages are half-resolution. For your engine, the fastest practical win is half-res DOF + adaptive taps + less aggressive focus defaults.

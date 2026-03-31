@@ -25,6 +25,7 @@ void graphics_init(void)
         .instance_layer_count        = 0,
         .instance_extension_count    = glfw_ext_count,
         .device_extension_count      = 2,
+	
         .enable_gpu_based_validation = VALIDATION,
         .enable_validation           = VALIDATION,
 
@@ -105,6 +106,7 @@ void gfx_pipelines()
                                                                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
             pipelines.toon_outline     = pipeline_create_graphics(&renderer, &cfg);
         }
+        pipelines.dof_prepare = pipeline_create_compute(&renderer, "compiledshaders/dof_prepare.comp.spv");
         pipelines.postprocess = pipeline_create_compute(&renderer, "compiledshaders/postprocess.comp.spv");
         pipelines.bloom_downsample = pipeline_create_compute(&renderer, "compiledshaders/bloom_downsample.comp.spv");
         pipelines.bloom_upsample   = pipeline_create_compute(&renderer, "compiledshaders/bloom_upsample.comp.spv");
@@ -245,7 +247,6 @@ void gfx_pipelines()
         }
     }
 }
-
 
 
 
