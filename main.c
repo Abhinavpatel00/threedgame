@@ -136,9 +136,22 @@ typedef struct GltfSceneInstance
     bool         animation_paused;
 } GltfSceneInstance;
 
+typedef enum PrimitiveShape
+{
+    PRIM_NONE = 0,
+    PRIM_CUBE,
+    PRIM_CUBOID,
+    PRIM_PLANE,
+    PRIM_SPHERE,
+    PRIM_CYLINDER,
+    PRIM_CONE,
+} PrimitiveShape;
+
 typedef struct Draw3DDesc
 {
     const char* gltf_path;
+    PrimitiveShape primitive;
+    vec3        primitive_size;
     vec3        position;
     bool        bloom_enabled;
     vec3        bloom_color;
@@ -286,6 +299,24 @@ static uint32_t find_animation_by_name(const GltfSceneInstance* instance, const 
 static double bytes_to_mib(VkDeviceSize bytes)
 {
     return (double)bytes / (1024.0 * 1024.0);
+}
+
+static uint64_t pack_cell_key_i32(int32_t cell_x, int32_t cell_z)
+{
+    return ((uint64_t)(uint32_t)cell_x << 32) | (uint64_t)(uint32_t)cell_z;
+}
+
+static void mu_multi_index_reset(mu_multi_index* index)
+{
+    if(!index)
+        return;
+
+    index->node_count = 0;
+    index->free_head  = MU_MULTI_INDEX_NONE;
+    index->map_count  = 0;
+
+    if(index->map_states && index->map_capacity > 0)
+        memset(index->map_states, 0, index->map_capacity * sizeof(uint8_t));
 }
 
 static void update_animation_time(GltfSceneInstance* instance, float delta_seconds)
@@ -489,12 +520,520 @@ static SamplerID sampler_from_view(const GltfGpuModel* model, const GLTFTextureV
     return model->sampler_map[view->sample_index];
 }
 
-static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
+static void free_primitive_mesh(GLTFMesh* mesh)
 {
-    memset(model, 0, sizeof(*model));
+    if(!mesh)
+        return;
 
-    if(!loadGltf(gltf_path, GLTF_FLAG_LOAD_VERTICES | GLTF_FLAG_CALCULATE_BOUNDS, &model->cpu))
+    free(mesh->index);
+    mesh->index = NULL;
+
+    for(uint32_t i = 0; i < GLTF_ATTRIBUTE_TYPE_COUNT; ++i)
+    {
+        free(mesh->attributes[i]);
+        mesh->attributes[i] = NULL;
+    }
+}
+
+static void primitive_mesh_compute_bounds(GLTFMesh* mesh)
+{
+    if(!mesh || !mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] || mesh->vertex_count == 0)
+        return;
+
+    float* positions = (float*)mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION];
+    mesh->min[0]     = mesh->max[0] = positions[0];
+    mesh->min[1]     = mesh->max[1] = positions[1];
+    mesh->min[2]     = mesh->max[2] = positions[2];
+
+    for(uint32_t i = 1; i < mesh->vertex_count; ++i)
+    {
+        float x = positions[i * 3u + 0u];
+        float y = positions[i * 3u + 1u];
+        float z = positions[i * 3u + 2u];
+        if(x < mesh->min[0]) mesh->min[0] = x;
+        if(y < mesh->min[1]) mesh->min[1] = y;
+        if(z < mesh->min[2]) mesh->min[2] = z;
+        if(x > mesh->max[0]) mesh->max[0] = x;
+        if(y > mesh->max[1]) mesh->max[1] = y;
+        if(z > mesh->max[2]) mesh->max[2] = z;
+    }
+}
+
+static bool build_primitive_mesh_box(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
         return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    const float hx = size[0] * 0.5f;
+    const float hy = size[1] * 0.5f;
+    const float hz = size[2] * 0.5f;
+
+    const uint32_t vertex_count = 24;
+    const uint32_t index_count  = 36;
+
+    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    const float face_positions[6][12] = {
+        { hx, -hy, -hz,  hx, -hy,  hz,  hx,  hy,  hz,  hx,  hy, -hz },
+        { -hx, -hy,  hz, -hx, -hy, -hz, -hx,  hy, -hz, -hx,  hy,  hz },
+        { -hx,  hy, -hz,  hx,  hy, -hz,  hx,  hy,  hz, -hx,  hy,  hz },
+        { -hx, -hy,  hz,  hx, -hy,  hz,  hx, -hy, -hz, -hx, -hy, -hz },
+        { -hx, -hy,  hz, -hx,  hy,  hz,  hx,  hy,  hz,  hx, -hy,  hz },
+        {  hx, -hy, -hz,  hx,  hy, -hz, -hx,  hy, -hz, -hx, -hy, -hz },
+    };
+
+    const float face_normals[6][3] = {
+        { 1.0f, 0.0f, 0.0f },
+        { -1.0f, 0.0f, 0.0f },
+        { 0.0f, 1.0f, 0.0f },
+        { 0.0f, -1.0f, 0.0f },
+        { 0.0f, 0.0f, 1.0f },
+        { 0.0f, 0.0f, -1.0f },
+    };
+
+    const float face_uvs[8] = { 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f };
+
+    uint32_t v = 0;
+    uint32_t i = 0;
+    for(uint32_t face = 0; face < 6; ++face)
+    {
+        for(uint32_t k = 0; k < 4; ++k)
+        {
+            positions[v * 3u + 0u] = face_positions[face][k * 3u + 0u];
+            positions[v * 3u + 1u] = face_positions[face][k * 3u + 1u];
+            positions[v * 3u + 2u] = face_positions[face][k * 3u + 2u];
+
+            normals[v * 3u + 0u] = face_normals[face][0];
+            normals[v * 3u + 1u] = face_normals[face][1];
+            normals[v * 3u + 2u] = face_normals[face][2];
+
+            uvs[v * 2u + 0u] = face_uvs[k * 2u + 0u];
+            uvs[v * 2u + 1u] = face_uvs[k * 2u + 1u];
+            ++v;
+        }
+
+        uint32_t base = face * 4u;
+        indices[i++]  = base + 0u;
+        indices[i++]  = base + 1u;
+        indices[i++]  = base + 2u;
+        indices[i++]  = base + 2u;
+        indices[i++]  = base + 3u;
+        indices[i++]  = base + 0u;
+    }
+
+    out_mesh->vertex_count = vertex_count;
+    out_mesh->index_count  = index_count;
+    out_mesh->index        = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_plane(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    const float hx = size[0] * 0.5f;
+    const float hz = size[2] * 0.5f;
+
+    const uint32_t vertex_count = 4;
+    const uint32_t index_count  = 6;
+
+    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    positions[0] = -hx; positions[1] = 0.0f; positions[2] = -hz;
+    positions[3] =  hx; positions[4] = 0.0f; positions[5] = -hz;
+    positions[6] =  hx; positions[7] = 0.0f; positions[8] =  hz;
+    positions[9] = -hx; positions[10] = 0.0f; positions[11] =  hz;
+
+    for(uint32_t v = 0; v < vertex_count; ++v)
+    {
+        normals[v * 3u + 0u] = 0.0f;
+        normals[v * 3u + 1u] = 1.0f;
+        normals[v * 3u + 2u] = 0.0f;
+    }
+
+    uvs[0] = 0.0f; uvs[1] = 0.0f;
+    uvs[2] = 1.0f; uvs[3] = 0.0f;
+    uvs[4] = 1.0f; uvs[5] = 1.0f;
+    uvs[6] = 0.0f; uvs[7] = 1.0f;
+
+    indices[0] = 0u; indices[1] = 1u; indices[2] = 2u;
+    indices[3] = 2u; indices[4] = 3u; indices[5] = 0u;
+
+    out_mesh->vertex_count = vertex_count;
+    out_mesh->index_count  = index_count;
+    out_mesh->index        = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_sphere(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    const float radius = size[0] * 0.5f;
+    const uint32_t segments_u = 24;
+    const uint32_t segments_v = 16;
+    const uint32_t vertex_count = (segments_u + 1u) * (segments_v + 1u);
+    const uint32_t index_count  = segments_u * segments_v * 6u;
+
+    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    const float pi = 3.14159265358979323846f;
+    const float two_pi = 6.28318530717958647692f;
+
+    uint32_t v = 0;
+    for(uint32_t y = 0; y <= segments_v; ++y)
+    {
+        float vy = (float)y / (float)segments_v;
+        float theta = vy * pi;
+        float sin_t = sinf(theta);
+        float cos_t = cosf(theta);
+
+        for(uint32_t x = 0; x <= segments_u; ++x)
+        {
+            float vx = (float)x / (float)segments_u;
+            float phi = vx * two_pi;
+            float sin_p = sinf(phi);
+            float cos_p = cosf(phi);
+
+            float nx = cos_p * sin_t;
+            float ny = cos_t;
+            float nz = sin_p * sin_t;
+
+            positions[v * 3u + 0u] = nx * radius;
+            positions[v * 3u + 1u] = ny * radius;
+            positions[v * 3u + 2u] = nz * radius;
+
+            normals[v * 3u + 0u] = nx;
+            normals[v * 3u + 1u] = ny;
+            normals[v * 3u + 2u] = nz;
+
+            uvs[v * 2u + 0u] = vx;
+            uvs[v * 2u + 1u] = 1.0f - vy;
+            ++v;
+        }
+    }
+
+    uint32_t i = 0;
+    for(uint32_t y = 0; y < segments_v; ++y)
+    {
+        uint32_t row = y * (segments_u + 1u);
+        uint32_t next = row + segments_u + 1u;
+        for(uint32_t x = 0; x < segments_u; ++x)
+        {
+            uint32_t a = row + x;
+            uint32_t b = next + x;
+            uint32_t c = next + x + 1u;
+            uint32_t d = row + x + 1u;
+
+            indices[i++] = a;
+            indices[i++] = b;
+            indices[i++] = c;
+            indices[i++] = c;
+            indices[i++] = d;
+            indices[i++] = a;
+        }
+    }
+
+    out_mesh->vertex_count = vertex_count;
+    out_mesh->index_count  = index_count;
+    out_mesh->index        = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    const float radius = size[0] * 0.5f;
+    const float height = size[1];
+    const uint32_t segments = 24;
+
+    const uint32_t side_verts = (segments + 1u) * 2u;
+    const uint32_t cap_verts  = segments + 1u;
+    const uint32_t vertex_count = side_verts + cap_verts + (cone ? 0u : cap_verts);
+    const uint32_t side_index_count = segments * 6u;
+    const uint32_t cap_index_count = segments * 3u;
+    const uint32_t index_count = side_index_count + cap_index_count + (cone ? 0u : cap_index_count);
+
+    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    const float half_h = height * 0.5f;
+    const float two_pi = 6.28318530717958647692f;
+
+    uint32_t v = 0;
+    for(uint32_t s = 0; s <= segments; ++s)
+    {
+        float t = (float)s / (float)segments;
+        float ang = t * two_pi;
+        float cs = cosf(ang);
+        float sn = sinf(ang);
+
+        float nx = cs;
+        float nz = sn;
+        float top_r = cone ? 0.0f : radius;
+
+        positions[v * 3u + 0u] = cs * radius;
+        positions[v * 3u + 1u] = -half_h;
+        positions[v * 3u + 2u] = sn * radius;
+        normals[v * 3u + 0u] = nx;
+        normals[v * 3u + 1u] = cone ? radius / height : 0.0f;
+        normals[v * 3u + 2u] = nz;
+        uvs[v * 2u + 0u] = t;
+        uvs[v * 2u + 1u] = 0.0f;
+        ++v;
+
+        positions[v * 3u + 0u] = cs * top_r;
+        positions[v * 3u + 1u] = half_h;
+        positions[v * 3u + 2u] = sn * top_r;
+        normals[v * 3u + 0u] = nx;
+        normals[v * 3u + 1u] = cone ? radius / height : 0.0f;
+        normals[v * 3u + 2u] = nz;
+        uvs[v * 2u + 0u] = t;
+        uvs[v * 2u + 1u] = 1.0f;
+        ++v;
+    }
+
+    uint32_t bottom_center = v;
+    positions[v * 3u + 0u] = 0.0f;
+    positions[v * 3u + 1u] = -half_h;
+    positions[v * 3u + 2u] = 0.0f;
+    normals[v * 3u + 0u] = 0.0f;
+    normals[v * 3u + 1u] = -1.0f;
+    normals[v * 3u + 2u] = 0.0f;
+    uvs[v * 2u + 0u] = 0.5f;
+    uvs[v * 2u + 1u] = 0.5f;
+    ++v;
+
+    for(uint32_t s = 0; s < segments; ++s)
+    {
+        float t = (float)s / (float)segments;
+        float ang = t * two_pi;
+        float cs = cosf(ang);
+        float sn = sinf(ang);
+        positions[v * 3u + 0u] = cs * radius;
+        positions[v * 3u + 1u] = -half_h;
+        positions[v * 3u + 2u] = sn * radius;
+        normals[v * 3u + 0u] = 0.0f;
+        normals[v * 3u + 1u] = -1.0f;
+        normals[v * 3u + 2u] = 0.0f;
+        uvs[v * 2u + 0u] = (cs + 1.0f) * 0.5f;
+        uvs[v * 2u + 1u] = (sn + 1.0f) * 0.5f;
+        ++v;
+    }
+
+    uint32_t top_center = v;
+    if(!cone)
+    {
+        positions[v * 3u + 0u] = 0.0f;
+        positions[v * 3u + 1u] = half_h;
+        positions[v * 3u + 2u] = 0.0f;
+        normals[v * 3u + 0u] = 0.0f;
+        normals[v * 3u + 1u] = 1.0f;
+        normals[v * 3u + 2u] = 0.0f;
+        uvs[v * 2u + 0u] = 0.5f;
+        uvs[v * 2u + 1u] = 0.5f;
+        ++v;
+
+        for(uint32_t s = 0; s < segments; ++s)
+        {
+            float t = (float)s / (float)segments;
+            float ang = t * two_pi;
+            float cs = cosf(ang);
+            float sn = sinf(ang);
+            positions[v * 3u + 0u] = cs * radius;
+            positions[v * 3u + 1u] = half_h;
+            positions[v * 3u + 2u] = sn * radius;
+            normals[v * 3u + 0u] = 0.0f;
+            normals[v * 3u + 1u] = 1.0f;
+            normals[v * 3u + 2u] = 0.0f;
+            uvs[v * 2u + 0u] = (cs + 1.0f) * 0.5f;
+            uvs[v * 2u + 1u] = (sn + 1.0f) * 0.5f;
+            ++v;
+        }
+    }
+
+    uint32_t i = 0;
+    for(uint32_t s = 0; s < segments; ++s)
+    {
+        uint32_t base = s * 2u;
+        uint32_t a = base + 0u;
+        uint32_t b = base + 1u;
+        uint32_t c = base + 3u;
+        uint32_t d = base + 2u;
+        indices[i++] = a;
+        indices[i++] = b;
+        indices[i++] = c;
+        indices[i++] = c;
+        indices[i++] = d;
+        indices[i++] = a;
+    }
+
+    uint32_t bottom_ring = bottom_center + 1u;
+    for(uint32_t s = 0; s < segments; ++s)
+    {
+        uint32_t a = bottom_center;
+        uint32_t b = bottom_ring + s;
+        uint32_t c = bottom_ring + ((s + 1u) % segments);
+        indices[i++] = a;
+        indices[i++] = c;
+        indices[i++] = b;
+    }
+
+    if(!cone)
+    {
+        uint32_t top_ring = top_center + 1u;
+        for(uint32_t s = 0; s < segments; ++s)
+        {
+            uint32_t a = top_center;
+            uint32_t b = top_ring + s;
+            uint32_t c = top_ring + ((s + 1u) % segments);
+            indices[i++] = a;
+            indices[i++] = b;
+            indices[i++] = c;
+        }
+    }
+
+    out_mesh->vertex_count = vertex_count;
+    out_mesh->index_count  = index_count;
+    out_mesh->index        = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh(PrimitiveShape shape, const vec3 size, GLTFMesh* out_mesh)
+{
+    switch(shape)
+    {
+        case PRIM_CUBE:
+        case PRIM_CUBOID:
+            return build_primitive_mesh_box(size, out_mesh);
+        case PRIM_PLANE:
+            return build_primitive_mesh_plane(size, out_mesh);
+        case PRIM_SPHERE:
+            return build_primitive_mesh_sphere(size, out_mesh);
+        case PRIM_CYLINDER:
+            return build_primitive_mesh_cylinder(size, false, out_mesh);
+        case PRIM_CONE:
+            return build_primitive_mesh_cylinder(size, true, out_mesh);
+        default:
+            return false;
+    }
+}
+
+static GLTFContainer* create_primitive_container(PrimitiveShape shape, const vec3 size)
+{
+    GLTFContainer* gltf = (GLTFContainer*)calloc(1, sizeof(GLTFContainer));
+    if(!gltf)
+        return NULL;
+
+    gltf->mesh_count = 1;
+    gltf->meshes = (GLTFMesh*)calloc(1, sizeof(GLTFMesh));
+    if(!gltf->meshes)
+    {
+        free(gltf);
+        return NULL;
+    }
+
+    if(!build_primitive_mesh(shape, size, &gltf->meshes[0]))
+    {
+        free_primitive_mesh(&gltf->meshes[0]);
+        free(gltf->meshes);
+        free(gltf);
+        return NULL;
+    }
+
+    gltf->vertex_count = gltf->meshes[0].vertex_count;
+    gltf->index_count  = gltf->meshes[0].index_count;
+    strncpy(gltf->source_path, "primitive", sizeof(gltf->source_path) - 1);
+
+    return gltf;
+}
+
+static bool gltf_gpu_model_init_from_cpu(GltfGpuModel* model, GLTFContainer* cpu)
+{
+    if(!model || !cpu)
+        return false;
+
+    memset(model, 0, sizeof(*model));
+    model->cpu = cpu;
 
     if(model->cpu->mesh_count == 0)
         return false;
@@ -649,6 +1188,24 @@ static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
     return true;
 }
 
+static bool gltf_gpu_model_init(GltfGpuModel* model, const char* gltf_path)
+{
+    if(!model)
+        return false;
+
+    GLTFContainer* cpu = NULL;
+    if(!loadGltf(gltf_path, GLTF_FLAG_LOAD_VERTICES | GLTF_FLAG_CALCULATE_BOUNDS, &cpu))
+        return false;
+
+    if(!gltf_gpu_model_init_from_cpu(model, cpu))
+    {
+        freeGltf(cpu);
+        return false;
+    }
+
+    return true;
+}
+
 static void gltf_gpu_model_destroy(GltfGpuModel* model)
 {
     if(model->gpu_meshes && model->cpu)
@@ -726,13 +1283,53 @@ static void destroy_scene_instances(GltfSceneInstance* instances, uint32_t loade
 
 static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
 {
-    if(!desc || !out_instance || !desc->gltf_path)
+    if(!desc || !out_instance)
+        return false;
+
+    bool use_primitive = desc->gltf_path == NULL && desc->primitive != PRIM_NONE;
+    if(!desc->gltf_path && !use_primitive)
         return false;
 
     memset(out_instance, 0, sizeof(*out_instance));
 
-    if(!gltf_gpu_model_init(&out_instance->model, desc->gltf_path))
-        return false;
+    if(use_primitive)
+    {
+        vec3 size = {desc->primitive_size[0], desc->primitive_size[1], desc->primitive_size[2]};
+        if(size[0] <= 0.0f)
+            size[0] = 1.0f;
+        if(size[2] <= 0.0f)
+            size[2] = 1.0f;
+        if(desc->primitive == PRIM_CUBE || desc->primitive == PRIM_CUBOID)
+        {
+            if(size[1] <= 0.0f)
+                size[1] = 1.0f;
+        }
+        if(desc->primitive == PRIM_SPHERE)
+        {
+            size[1] = size[0];
+            size[2] = size[0];
+        }
+        if(desc->primitive == PRIM_CYLINDER || desc->primitive == PRIM_CONE)
+        {
+            if(size[1] <= 0.0f)
+                size[1] = 1.0f;
+            size[2] = size[0];
+        }
+
+        GLTFContainer* primitive = create_primitive_container(desc->primitive, size);
+        if(!primitive)
+            return false;
+        if(!gltf_gpu_model_init_from_cpu(&out_instance->model, primitive))
+        {
+            freeGltf(primitive);
+            return false;
+        }
+    }
+    else
+    {
+        if(!gltf_gpu_model_init(&out_instance->model, desc->gltf_path))
+            return false;
+    }
 
     out_instance->position[0]      = desc->position[0];
     out_instance->position[1]      = desc->position[1];
@@ -1202,10 +1799,12 @@ int main(void)
     double    memory_budget_last_update = -1.0;
     double    memory_budget_interval_s = 2.0;
     bool      memory_window_open = true;
+    mu_multi_index avoidance_index = {0};
 
     input_init(&input);
     input_attach(&input, renderer.window);
     input_actions_default(&actions);
+    mu_multi_index_init(&avoidance_index, 256, 256);
 
     while(!glfwWindowShouldClose(renderer.window))
     {
@@ -1262,50 +1861,98 @@ int main(void)
 
         if(loaded_count > 0)
         {
-            float move_x = 0.0f;
-            float move_z = 0.0f;
-            input_get_move_vector(&input, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, &move_x, &move_z);
+            const float runner_min_z   = -25.0f;
+            const float runner_max_z   = 25.0f;
+            const float runner_min_x   = -10.0f;
+            const float runner_max_x   = 10.0f;
+            const float runner_speed_a = 2.0f;
+            const float runner_speed_b = 3.5f;
+            const float avoid_radius   = 1.25f;
+            const float avoid_strength = 2.0f;
+            const float side_max       = 2.0f;
+            const float edge_push      = 3.0f;
+            const char* runner_anim    = "run";
+            const float avoid_radius_sq = avoid_radius * avoid_radius;
+            const float avoid_cell_size = avoid_radius;
+            const float inv_cell_size   = avoid_cell_size > 0.0f ? (1.0f / avoid_cell_size) : 1.0f;
+            const int   cell_range      = (int)ceilf(avoid_radius * inv_cell_size);
 
-            float desired_vx = move_x * player_speed;
-            float desired_vz = move_z * player_speed;
+            mu_multi_index_reset(&avoidance_index);
 
-            player_vel_x += (desired_vx - player_vel_x) * player_accel * frame_delta_seconds;
-            player_vel_z += (desired_vz - player_vel_z) * player_accel * frame_delta_seconds;
-
-            if(move_x == 0.0f && move_z == 0.0f)
+            for(uint32_t i = 0; i < loaded_count; ++i)
             {
-                float decay = 1.0f - player_friction * frame_delta_seconds;
-                if(decay < 0.0f)
-                    decay = 0.0f;
-                else if(decay > 1.0f)
-                    decay = 1.0f;
-                player_vel_x *= decay;
-                player_vel_z *= decay;
+                int32_t cell_x = (int32_t)floorf(instances[i].position[0] * inv_cell_size);
+                int32_t cell_z = (int32_t)floorf(instances[i].position[2] * inv_cell_size);
+                uint64_t key   = pack_cell_key_i32(cell_x, cell_z);
+                mu_multi_index_add(&avoidance_index, key, i);
             }
 
-            instances[0].position[0] += player_vel_x * frame_delta_seconds;
-            instances[0].position[2] += player_vel_z * frame_delta_seconds;
-            instances[0].position[1] = 0.0f;
-
-            float speed = sqrtf(player_vel_x * player_vel_x + player_vel_z * player_vel_z);
-            if(instances[0].model.cpu && instances[0].model.cpu->animation_count > 0 && !instances[0].animation_paused)
+            for(uint32_t i = 0; i < loaded_count; ++i)
             {
-                uint32_t idle_index = find_animation_by_name(&instances[0], player_idle_anim, 0);
-                uint32_t move_index = find_animation_by_name(&instances[0], player_move_anim, idle_index);
+                float t = (float)(i % 7u) / 6.0f;
+                float speed = runner_speed_a + (runner_speed_b - runner_speed_a) * t;
 
-                if(speed > 0.05f)
+                float avoid_x = 0.0f;
+                float avoid_z = 0.0f;
+
+                int32_t cell_x = (int32_t)floorf(instances[i].position[0] * inv_cell_size);
+                int32_t cell_z = (int32_t)floorf(instances[i].position[2] * inv_cell_size);
+
+                for(int dz = -cell_range; dz <= cell_range; ++dz)
                 {
-                    if(instances[0].animation_index != move_index)
-                        instances[0].animation_time = 0.0f;
-                    instances[0].animation_index = move_index;
-                    instances[0].animation_speed = 1.0f;
+                    for(int dx = -cell_range; dx <= cell_range; ++dx)
+                    {
+                        uint64_t key = pack_cell_key_i32(cell_x + dx, cell_z + dz);
+                        uint32_t start = mu_multi_index_first(&avoidance_index, key);
+                        for(uint32_t node = start; node != MU_MULTI_INDEX_NONE; node = mu_multi_index_next(&avoidance_index, start, node))
+                        {
+                            uint32_t j = mu_multi_index_value(&avoidance_index, node);
+                            if(i == j)
+                                continue;
+
+                            float dxp = instances[i].position[0] - instances[j].position[0];
+                            float dzp = instances[i].position[2] - instances[j].position[2];
+                            float dist_sq = dxp * dxp + dzp * dzp;
+                            if(dist_sq > 0.0001f && dist_sq < avoid_radius_sq)
+                            {
+                                float inv = 1.0f / dist_sq;
+                                avoid_x += dxp * inv;
+                                avoid_z += dzp * inv;
+                            }
+                        }
+                    }
                 }
-                else
+
+                if(instances[i].position[0] < runner_min_x + 1.0f)
+                    avoid_x += (runner_min_x + 1.0f - instances[i].position[0]) * edge_push;
+                if(instances[i].position[0] > runner_max_x - 1.0f)
+                    avoid_x -= (instances[i].position[0] - (runner_max_x - 1.0f)) * edge_push;
+
+                float side_vel = avoid_x * avoid_strength;
+                if(side_vel > side_max)
+                    side_vel = side_max;
+                else if(side_vel < -side_max)
+                    side_vel = -side_max;
+
+                instances[i].position[0] += side_vel * frame_delta_seconds;
+                instances[i].position[2] += speed * frame_delta_seconds;
+                if(instances[i].position[2] > runner_max_z)
+                    instances[i].position[2] = runner_min_z;
+
+                if(instances[i].position[0] < runner_min_x)
+                    instances[i].position[0] = runner_min_x;
+                else if(instances[i].position[0] > runner_max_x)
+                    instances[i].position[0] = runner_max_x;
+
+                instances[i].position[1] = 0.0f;
+
+                if(instances[i].model.cpu && instances[i].model.cpu->animation_count > 0 && !instances[i].animation_paused)
                 {
-                    if(instances[0].animation_index != idle_index)
-                        instances[0].animation_time = 0.0f;
-                    instances[0].animation_index = idle_index;
-                    instances[0].animation_speed = 1.0f;
+                    uint32_t run_index = find_animation_by_name(&instances[i], runner_anim, 0);
+                    if(instances[i].animation_index != run_index)
+                        instances[i].animation_time = 0.0f;
+                    instances[i].animation_index = run_index;
+                    instances[i].animation_speed = 1.0f;
                 }
             }
         }
@@ -1391,6 +2038,9 @@ int main(void)
             GPU_SCOPE(frame_prof, cmd, "MAIN", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
             {
                 vkCmdBeginRendering(cmd, &rendering);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.ground]);
+                vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
+                vkCmdDraw(cmd, 3, 1, 0, 0);
                 for(uint32_t i = 0; i < loaded_count; ++i)
                     draw_gltf_model(cmd, &instances[i].model);
                 vkCmdEndRendering(cmd);
@@ -1539,6 +2189,7 @@ int main(void)
         }
     }
 
+    mu_multi_index_deinit(&avoidance_index);
     destroy_scene_instances(instances, loaded_count);
     free_glb_paths(glb_paths, glb_count);
 

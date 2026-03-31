@@ -13,6 +13,7 @@ typedef struct
     uint32_t bloom_downsample;
     uint32_t bloom_upsample;
     uint32_t gltf_minimal;
+    uint32_t ground;
     uint32_t triangle;
     uint32_t triangle_wireframe;
     uint32_t sprite;

@@ -126,6 +126,19 @@ void gfx_pipelines()
         }
         {
             GraphicsPipelineConfig cfg = pipeline_config_default();
+            cfg.vert_path              = "compiledshaders/ground.vert.spv";
+            cfg.frag_path              = "compiledshaders/ground.frag.spv";
+            cfg.color_attachment_count = 1;
+            cfg.color_formats          = &renderer.hdr_color[1].format;
+            cfg.depth_format           = renderer.depth[1].format;
+            cfg.depth_test_enable      = true;
+            cfg.depth_write_enable     = true;
+            cfg.cull_mode              = VK_CULL_MODE_NONE;
+            cfg.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            pipelines.ground           = pipeline_create_graphics(&renderer, &cfg);
+        }
+        {
+            GraphicsPipelineConfig cfg = pipeline_config_default();
             cfg.vert_path              = "compiledshaders/triangle.vert.spv";
             cfg.frag_path              = "compiledshaders/triangle.frag.spv";
             cfg.color_attachment_count = 1;
