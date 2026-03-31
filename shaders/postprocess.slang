@@ -7,6 +7,9 @@ struct PostPush
   uint depth_texture_id;
   uint sampler_id;
 
+  uint  bloom_texture_id;
+  float bloom_intensity;
+
   uint width;
   uint height;
 
@@ -162,9 +165,14 @@ void cs_main(uint3 id: SV_DispatchThreadID)
 
   Texture2D           src = textures[push.src_texture_id];
   Texture2D           depth_tex = textures[push.depth_texture_id];
+  Texture2D           bloom_tex = textures[push.bloom_texture_id];
   RWTexture2D<float4> dst = storage_images[push.output_image_id];
 
 float3 color = apply_dof(src, depth_tex, pix);
+
+float2 uv = (float2(pix) + 0.5f) / float2(push.width, push.height);
+float3 bloom = bloom_tex.SampleLevel(samplers[push.sampler_id], uv, 0.0f).rgb;
+color += bloom * push.bloom_intensity;
 
 // exposure control
 color *= exp2(push.exposure);

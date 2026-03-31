@@ -303,6 +303,7 @@ typedef struct Bindless
 
 #define RT_MAX_MIPS 13  // covers up to 4096x4096
 #define RT_POOL_MAX 64
+#define BLOOM_MIPS 5
 
 typedef struct RenderTarget
 {
@@ -461,6 +462,7 @@ Frustum frustum;
     RenderTarget depth[MAX_SWAPCHAIN_IMAGES];
     RenderTarget hdr_color[MAX_SWAPCHAIN_IMAGES];
     RenderTarget ldr_color[MAX_SWAPCHAIN_IMAGES];
+    RenderTarget bloom_chain[MAX_SWAPCHAIN_IMAGES][BLOOM_MIPS];
     RenderTarget smaa_edges[MAX_SWAPCHAIN_IMAGES];
     RenderTarget smaa_weights[MAX_SWAPCHAIN_IMAGES];
 

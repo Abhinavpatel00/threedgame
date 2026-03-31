@@ -1425,6 +1425,28 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                    .mip_count  = 1,
                                    .debug_name = "ldr_color"};
 
+    RenderTargetSpec bloom_specs[BLOOM_MIPS] = {0};
+    {
+        uint32_t bloom_w = MAX(1u, r->swapchain.extent.width / 2);
+        uint32_t bloom_h = MAX(1u, r->swapchain.extent.height / 2);
+        for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
+        {
+            bloom_specs[mip] = (RenderTargetSpec){
+                .width      = bloom_w,
+                .height     = bloom_h,
+                .layers     = 1,
+                .format     = hdr_format,
+                .usage      = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mip_count  = 1,
+                .debug_name = "bloom_chain",
+            };
+
+            bloom_w = MAX(1u, bloom_w / 2);
+            bloom_h = MAX(1u, bloom_h / 2);
+        }
+    }
+
     RenderTargetSpec smaa_edge_spec = {.width  = r->swapchain.extent.width,
                                        .height = r->swapchain.extent.height,
                                        .layers = 1,
@@ -1628,6 +1650,10 @@ void renderer_create(Renderer* r, RendererDesc* desc)
         rt_create(r, &r->depth[i], &depth_spec);
         rt_create(r, &r->hdr_color[i], &hdr_spec);
         rt_create(r, &r->ldr_color[i], &ldr_spec);
+        for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
+        {
+            rt_create(r, &r->bloom_chain[i][mip], &bloom_specs[mip]);
+        }
 
         rt_create(r, &r->smaa_edges[i], &smaa_edge_spec);
         rt_create(r, &r->smaa_weights[i], &smaa_weight_spec);

@@ -16,6 +16,7 @@
 #define GRID_SPACING_X 2.6f
 #define GRID_SPACING_Z 2.6f
 static bool take_screenshot;
+
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;
               float    view_proj[4][4];
               float    camera_pos[3];
@@ -1283,6 +1284,12 @@ int main(void)
                     draw_gltf_model(cmd, &cam, &instances[i].model);
                 vkCmdEndRendering(cmd);
             }
+
+            post_pass();
+            //      pass_toon();
+            pass_smaa();
+            pass_ldr_to_swapchain();
+
             TracyCZoneN(imgui_zone, "ImGui CPU", 1);
             {
                 imgui_begin_frame();
@@ -1334,10 +1341,6 @@ int main(void)
             }
             TracyCZoneEnd(imgui_zone);
 
-            post_pass();
-            //      pass_toon();
-            pass_smaa();
-            pass_ldr_to_swapchain();
             pass_imgui();
 
 

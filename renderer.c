@@ -84,6 +84,8 @@ void gfx_pipelines()
             pipelines.fullscreen       = pipeline_create_graphics(&renderer, &cfg);
         }
         pipelines.postprocess = pipeline_create_compute(&renderer, "compiledshaders/postprocess.comp.spv");
+        pipelines.bloom_downsample = pipeline_create_compute(&renderer, "compiledshaders/bloom_downsample.comp.spv");
+        pipelines.bloom_upsample   = pipeline_create_compute(&renderer, "compiledshaders/bloom_upsample.comp.spv");
         {
             GraphicsPipelineConfig cfg = pipeline_config_default();
             cfg.vert_path              = "compiledshaders/gltf_uber.vert.spv";

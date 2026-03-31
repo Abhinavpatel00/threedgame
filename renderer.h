@@ -8,6 +8,8 @@ typedef struct
 {
     uint32_t fullscreen;
     uint32_t postprocess;
+    uint32_t bloom_downsample;
+    uint32_t bloom_upsample;
     uint32_t gltf_minimal;
     uint32_t triangle;
     uint32_t triangle_wireframe;
