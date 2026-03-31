@@ -985,7 +985,7 @@ static void gltf_gpu_model_update_skinning(GltfSceneInstance* instance, VkComman
 {
     GltfGpuModel* model = &instance->model;
 
-    if(model->cpu->node_count > 0 && model->cpu->animation_count > 0)
+    if(model->cpu->node_count > 0)
     {
         uint32_t anim_index = instance->animation_index;
         if(anim_index >= model->cpu->animation_count)

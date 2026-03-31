@@ -1,4 +1,4 @@
-#include "renderer.h"
+ #include "renderer.h"
 
 Renderer renderer;
 EnginePipelines pipelines;
@@ -27,6 +27,7 @@ void graphics_init(void)
         .device_extension_count      = 2,
         .enable_gpu_based_validation = VALIDATION,
         .enable_validation           = VALIDATION,
+
 
         .validation_severity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT
                                | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,

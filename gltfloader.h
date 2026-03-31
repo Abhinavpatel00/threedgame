@@ -96,6 +96,7 @@ typedef struct GLTFNode
     versor rotation;
     vec3   scale;
     mat4   matrix;
+    bool   has_matrix;
 } GLTFNode;
 
 typedef struct GLTFSkin

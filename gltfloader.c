@@ -590,15 +590,15 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
 
         if(src->has_matrix)
         {
-            for(int r = 0; r < 4; ++r)
-                for(int c = 0; c < 4; ++c)
-                    dst->matrix[r][c] = src->matrix[r * 4 + c];
+            memcpy(dst->matrix, src->matrix, sizeof(mat4));
+            dst->has_matrix = true;
         }
         else
         {
             for(int r = 0; r < 4; ++r)
                 for(int c = 0; c < 4; ++c)
                     dst->matrix[r][c] = (r == c) ? 1.0f : 0.0f;
+            dst->has_matrix = false;
         }
     }
 
@@ -861,11 +861,13 @@ void gltf_apply_animation(const GLTFContainer* gltf, u32 animation_index, float 
     vec3* node_t = (vec3*)malloc((size_t)gltf->node_count * sizeof(vec3));
     versor* node_r = (versor*)malloc((size_t)gltf->node_count * sizeof(versor));
     vec3* node_s = (vec3*)malloc((size_t)gltf->node_count * sizeof(vec3));
-    if(!node_t || !node_r || !node_s)
+    bool* computed = (bool*)calloc((size_t)gltf->node_count, sizeof(bool));
+    if(!node_t || !node_r || !node_s || !computed)
     {
         free(node_t);
         free(node_r);
         free(node_s);
+        free(computed);
         return;
     }
 
@@ -923,17 +925,48 @@ void gltf_apply_animation(const GLTFContainer* gltf, u32 animation_index, float 
 
     for(u32 i = 0; i < gltf->node_count; ++i)
     {
-        mat4 local;
-        build_trs_matrix(node_t[i], node_r[i], node_s[i], local);
+        bool progress = false;
+        for(u32 n = 0; n < gltf->node_count; ++n)
+        {
+            if(computed[n])
+                continue;
 
-        u32 parent = gltf->nodes[i].parent_index;
-        if(parent != UINT_MAX && parent < gltf->node_count)
-            glm_mat4_mul(out_node_world_matrices[parent], local, out_node_world_matrices[i]);
+            u32 parent = gltf->nodes[n].parent_index;
+            if(parent != UINT_MAX && parent < gltf->node_count && !computed[parent])
+                continue;
+
+            mat4 local;
+            if(gltf->nodes[n].has_matrix)
+                glm_mat4_copy(gltf->nodes[n].matrix, local);
+            else
+                build_trs_matrix(node_t[n], node_r[n], node_s[n], local);
+
+            if(parent != UINT_MAX && parent < gltf->node_count)
+                glm_mat4_mul(out_node_world_matrices[parent], local, out_node_world_matrices[n]);
+            else
+                glm_mat4_copy(local, out_node_world_matrices[n]);
+
+            computed[n] = true;
+            progress = true;
+        }
+
+        if(!progress)
+            break;
+    }
+
+    for(u32 i = 0; i < gltf->node_count; ++i)
+    {
+        if(computed[i])
+            continue;
+
+        if(gltf->nodes[i].has_matrix)
+            glm_mat4_copy(gltf->nodes[i].matrix, out_node_world_matrices[i]);
         else
-            glm_mat4_copy(local, out_node_world_matrices[i]);
+            build_trs_matrix(node_t[i], node_r[i], node_s[i], out_node_world_matrices[i]);
     }
 
     free(node_t);
     free(node_r);
     free(node_s);
+    free(computed);
 }

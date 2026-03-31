@@ -21,6 +21,8 @@ struct DrawData
     uint skin_offset;
     uint flags;
     uint _pad0;
+    float3 bloom_color;
+    uint _pad1;
 };
 
 struct GPUMaterial
@@ -116,11 +118,12 @@ SamplerState samplers[];
 Push push;
 
 [shader("vertex")]
-VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
+VSOutput vs_main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint startInstance : SV_StartInstanceLocation)
 {
     VSOutput o;
 
     DrawData* draws = (DrawData*)push.draw_data_ptr;
+    uint drawID = startInstance + instanceID;
     DrawData draw = draws[drawID];
 
     uint* indices = (uint*)draw.idx_ptr;
