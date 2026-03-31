@@ -33,6 +33,8 @@ typedef struct GltfIndirectDrawData
     uint32_t        skin_offset;
     uint32_t        flags;
     uint32_t        _pad0;
+    float           bloom_color[3];
+    uint32_t        _pad1;
 } GltfIndirectDrawData;
 
 typedef struct
@@ -128,6 +130,7 @@ typedef struct GltfSceneInstance
     GltfGpuModel model;
     vec3         position;
     bool         bloom_enabled;
+    vec3         bloom_color;
     uint32_t     animation_index;
     float        animation_time;
     float        animation_speed;
@@ -139,6 +142,7 @@ typedef struct Draw3DDesc
     const char* gltf_path;
     vec3        position;
     bool        bloom_enabled;
+    vec3        bloom_color;
     uint32_t    animation_index;
     float       animation_time;
     float       animation_speed;
@@ -699,7 +703,7 @@ static void destroy_scene_instances(GltfSceneInstance* instances, uint32_t loade
     free(instances);
 }
 
-static bool draw_3d_create_instance(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
+static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
 {
     if(!desc || !out_instance || !desc->gltf_path)
         return false;
@@ -713,6 +717,9 @@ static bool draw_3d_create_instance(const Draw3DDesc* desc, GltfSceneInstance* o
     out_instance->position[1] = desc->position[1];
     out_instance->position[2] = desc->position[2];
     out_instance->bloom_enabled   = desc->bloom_enabled;
+    out_instance->bloom_color[0]  = desc->bloom_color[0];
+    out_instance->bloom_color[1]  = desc->bloom_color[1];
+    out_instance->bloom_color[2]  = desc->bloom_color[2];
     out_instance->animation_index = desc->animation_index;
     out_instance->animation_time  = desc->animation_time;
     out_instance->animation_speed = desc->animation_speed;
@@ -759,12 +766,15 @@ static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfScen
         desc.position[1]      = 0.0f;
         desc.position[2]      = -(float)row * GRID_SPACING_Z;
         desc.bloom_enabled    = false;
+        desc.bloom_color[0]   = 1.0f;
+        desc.bloom_color[1]   = 1.0f;
+        desc.bloom_color[2]   = 1.0f;
         desc.animation_index  = 0;
         desc.animation_time   = 0.0f;
         desc.animation_speed  = 1.0f;
         desc.animation_paused = false;
 
-        if(!draw_3d_create_instance(&desc, &instances[loaded_count]))
+        if(!draw_3d(&desc, &instances[loaded_count]))
             continue;
 
         ++loaded_count;
@@ -1052,6 +1062,9 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
         draw->flags    = 0;
         if(instance->bloom_enabled)
             draw->flags |= 0x8u;
+        draw->bloom_color[0] = instance->bloom_color[0];
+        draw->bloom_color[1] = instance->bloom_color[1];
+        draw->bloom_color[2] = instance->bloom_color[2];
         u32 node_index = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
             glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], draw->model);

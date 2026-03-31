@@ -21,6 +21,8 @@ struct DrawData
     uint skin_offset;
     uint flags;
     uint _pad0;
+    float3 bloom_color;
+    uint _pad1;
 };
 
 struct GPUMaterial
@@ -48,6 +50,7 @@ struct VSOutput
     nointerpolation uint material_id : TEXCOORD3;
     nointerpolation uint object_id : TEXCOORD4;
     nointerpolation uint draw_flags : TEXCOORD5;
+    nointerpolation float3 bloom_color : TEXCOORD6;
 };
 
 struct FSOutput
@@ -204,6 +207,7 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
     o.material_id = draw.material_id;
     o.object_id = drawID + 1u;
     o.draw_flags = draw.flags;
+    o.bloom_color = draw.bloom_color;
 
     return o;
 }
@@ -258,6 +262,7 @@ FSOutput fs_main(VSOutput i)
     o.color = float4(color, base_color.a);
 
     bool bloom_enabled = (i.draw_flags & 0x8u) != 0u;
-    o.toon_data = bloom_enabled ? float4(max(color * 2.0, 0.0.xxx), 1.0) : float4(0.0, 0.0, 0.0, 1.0);
+    float3 bloom_src = color * max(i.bloom_color, 0.0.xxx) * 2.0;
+    o.toon_data = bloom_enabled ? float4(max(bloom_src, 0.0.xxx), 1.0) : float4(0.0, 0.0, 0.0, 1.0);
     return o;
 }
