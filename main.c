@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "passes.h"
 #include "gltfloader.h"
+#include "input.h"
 
 #include <dirent.h>
 #include <math.h>
@@ -16,7 +17,6 @@
 #define GRID_SPACING_X 2.6f
 #define GRID_SPACING_Z 2.6f
 static bool take_screenshot;
-
 
 
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;);
@@ -1164,15 +1164,10 @@ int main(void)
         return 1;
     }
 
-    bool   prev_space        = false;
-    bool   prev_left         = false;
-    bool   prev_right        = false;
-    bool   prev_r            = false;
-    bool   prev_up           = false;
-    bool   prev_down         = false;
-    bool   prev_m            = false;
-    bool   prev_k            = false;
+    Input  input             = {0};
     double prev_time_seconds = glfwGetTime();
+
+    input_init(&input);
 
     while(!glfwWindowShouldClose(renderer.window))
     {
@@ -1185,18 +1180,11 @@ int main(void)
         if(frame_delta_seconds < 0.0f)
             frame_delta_seconds = 0.0f;
 
-        bool key_space = glfwGetKey(renderer.window, GLFW_KEY_SPACE) == GLFW_PRESS;
-        bool key_left  = glfwGetKey(renderer.window, GLFW_KEY_LEFT) == GLFW_PRESS;
-        bool key_right = glfwGetKey(renderer.window, GLFW_KEY_RIGHT) == GLFW_PRESS;
-        bool key_r     = glfwGetKey(renderer.window, GLFW_KEY_R) == GLFW_PRESS;
-        bool key_up    = glfwGetKey(renderer.window, GLFW_KEY_UP) == GLFW_PRESS;
-        bool key_down  = glfwGetKey(renderer.window, GLFW_KEY_DOWN) == GLFW_PRESS;
-        bool key_m     = glfwGetKey(renderer.window, GLFW_KEY_1) == GLFW_PRESS;
-        bool key_k     = glfwGetKey(renderer.window, GLFW_KEY_2) == GLFW_PRESS;
+        input_update(&input, renderer.window);
 
-        if((key_m && !prev_m) || (key_k && !prev_k))
+        if(input_pressed(&input, KEY_1) || input_pressed(&input, KEY_2))
         {
-            const char* model_dir  = key_m ? PETS_DIR : BLOCKY_DIR;
+            const char* model_dir  = input_pressed(&input, KEY_1) ? PETS_DIR : BLOCKY_DIR;
             char**      next_paths = NULL;
             uint32_t    next_count = 0;
             if(collect_glb_paths(model_dir, &next_paths, &next_count))
@@ -1219,51 +1207,42 @@ int main(void)
             }
         }
 
-        if(key_space && !prev_space)
+        if(input_pressed(&input, KEY_SPACE))
         {
             bool pause_state = !instances[0].animation_paused;
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_paused = pause_state;
         }
 
-        if(key_right && !prev_right)
+        if(input_pressed(&input, KEY_RIGHT))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 cycle_animation_clip(&instances[i], 1);
         }
 
-        if(key_left && !prev_left)
+        if(input_pressed(&input, KEY_LEFT))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 cycle_animation_clip(&instances[i], -1);
         }
 
-        if(key_r && !prev_r)
+        if(input_pressed(&input, KEY_R))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_time = 0.0f;
         }
 
-        if(key_up && !prev_up)
+        if(input_pressed(&input, KEY_UP))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_speed = glm_min(instances[i].animation_speed + 0.25f, 4.0f);
         }
 
-        if(key_down && !prev_down)
+        if(input_pressed(&input, KEY_DOWN))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_speed = glm_max(instances[i].animation_speed - 0.25f, 0.25f);
         }
-
-        prev_space = key_space;
-        prev_left  = key_left;
-        prev_right = key_right;
-        prev_r     = key_r;
-        prev_up    = key_up;
-        prev_down  = key_down;
-        prev_m     = key_m;
-        prev_k     = key_k;
 
         for(uint32_t i = 0; i < loaded_count; ++i)
             update_animation_time(&instances[i], frame_delta_seconds);
