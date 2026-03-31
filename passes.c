@@ -188,7 +188,7 @@ static void pass_bloom(uint32_t current_image)
         }
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.bloom_upsample]);
-        for(uint32_t mip = BLOOM_MIPS - 1; mip > 1; --mip)
+        for(uint32_t mip = BLOOM_MIPS - 1; mip > 0; --mip)
         {
             RenderTarget* src = &renderer.bloom_chain[current_image][mip];
             RenderTarget* dst = &renderer.bloom_chain[current_image][mip - 1];
