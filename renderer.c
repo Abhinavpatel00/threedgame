@@ -112,7 +112,7 @@ void gfx_pipelines()
         pipelines.bloom_upsample   = pipeline_create_compute(&renderer, "compiledshaders/bloom_upsample.comp.spv");
         {
             GraphicsPipelineConfig cfg = pipeline_config_default();
-            VkFormat               gltf_color_formats[2] = {renderer.hdr_color[1].format, renderer.bloom_chain[1][0].format};
+            VkFormat               gltf_color_formats[2] = {renderer.hdr_color[1].format, renderer.bloom_chain[1].format};
             cfg.vert_path              = "compiledshaders/gltf_uber.vert.spv";
             cfg.frag_path              = "compiledshaders/gltf_uber.frag.spv";
             cfg.color_attachment_count = 2;

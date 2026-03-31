@@ -1444,27 +1444,16 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                    .mip_count  = 1,
                                    .debug_name = "ldr_color"};
 
-    RenderTargetSpec bloom_specs[BLOOM_MIPS] = {0};
-    {
-        uint32_t bloom_w = r->swapchain.extent.width;
-        uint32_t bloom_h = r->swapchain.extent.height;
-        for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
-        {
-            bloom_specs[mip] = (RenderTargetSpec){
-                .width      = bloom_w,
-                .height     = bloom_h,
-                .layers     = 1,
-                .format     = hdr_format,
-                .usage      = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
-                .mip_count  = 1,
-                .debug_name = "bloom_chain",
-            };
-
-            bloom_w = MAX(1u, bloom_w / 2);
-            bloom_h = MAX(1u, bloom_h / 2);
-        }
-    }
+    RenderTargetSpec bloom_spec = {
+        .width      = r->swapchain.extent.width,
+        .height     = r->swapchain.extent.height,
+        .layers     = 1,
+        .format     = hdr_format,
+        .usage      = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .mip_count  = BLOOM_MIPS,
+        .debug_name = "bloom_chain",
+    };
 
     RenderTargetSpec smaa_edge_spec = {.width  = r->swapchain.extent.width,
                                        .height = r->swapchain.extent.height,
@@ -1670,10 +1659,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
         rt_create(r, &r->hdr_color[i], &hdr_spec);
         rt_create(r, &r->dof_half[i], &dof_half_spec);
         rt_create(r, &r->ldr_color[i], &ldr_spec);
-        for(uint32_t mip = 0; mip < BLOOM_MIPS; ++mip)
-        {
-            rt_create(r, &r->bloom_chain[i][mip], &bloom_specs[mip]);
-        }
+        rt_create(r, &r->bloom_chain[i], &bloom_spec);
 
         rt_create(r, &r->smaa_edges[i], &smaa_edge_spec);
         rt_create(r, &r->smaa_weights[i], &smaa_weight_spec);
@@ -3627,6 +3613,91 @@ static uint32_t rt_compute_mip_count(uint32_t w, uint32_t h)
     return mips;
 }
 
+static uint32_t bindless_register_view(Renderer* r, VkImageView view, VkImageUsageFlags usage)
+{
+    uint32_t id;
+
+    if(!mu_id_pool_create_id(&texture_pool, &id))
+    {
+        fprintf(stderr, "Texture pool exhausted\n");
+        return UINT32_MAX;
+    }
+
+    if(usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+    {
+        VkDescriptorImageInfo img = {.imageView = view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+
+                                      .dstSet          = r->bindless_system.set,
+                                      .dstBinding      = BINDLESS_TEXTURE_BINDING,
+                                      .dstArrayElement = id,
+
+                                      .descriptorCount = 1,
+                                      .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                      .pImageInfo      = &img};
+
+        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    }
+
+    if(usage & VK_IMAGE_USAGE_STORAGE_BIT)
+    {
+        VkDescriptorImageInfo img = {.imageView = view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+
+                                      .dstSet          = r->bindless_system.set,
+                                      .dstBinding      = BINDLESS_STORAGE_IMAGE_BINDING,
+                                      .dstArrayElement = id,
+
+                                      .descriptorCount = 1,
+                                      .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                      .pImageInfo      = &img};
+
+        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    }
+
+    return id;
+}
+
+static void bindless_clear_view(Renderer* r, uint32_t id, VkImageUsageFlags usage)
+{
+    if(id == UINT32_MAX)
+        return;
+
+    if(usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+    {
+        VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                      .dstSet          = r->bindless_system.set,
+                                      .dstBinding      = BINDLESS_TEXTURE_BINDING,
+                                      .dstArrayElement = id,
+                                      .descriptorCount = 1,
+                                      .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                      .pImageInfo      = &img};
+
+        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    }
+
+    if(usage & VK_IMAGE_USAGE_STORAGE_BIT)
+    {
+        VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                      .dstSet          = r->bindless_system.set,
+                                      .dstBinding      = BINDLESS_STORAGE_IMAGE_BINDING,
+                                      .dstArrayElement = id,
+                                      .descriptorCount = 1,
+                                      .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                      .pImageInfo      = &img};
+
+        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    }
+
+    mu_id_pool_destroy_id(&texture_pool, id);
+}
+
 
 bool rt_create(Renderer* r, RenderTarget* rt, const RenderTargetSpec* spec)
 {
@@ -3635,6 +3706,9 @@ bool rt_create(Renderer* r, RenderTarget* rt, const RenderTargetSpec* spec)
         return false;
 
     memset(rt, 0, sizeof(*rt));
+    rt->bindless_index = UINT32_MAX;
+    for(uint32_t mip = 0; mip < RT_MAX_MIPS; ++mip)
+        rt->mip_bindless_index[mip] = UINT32_MAX;
 
     rt->format = spec->format;
     rt->width  = spec->width;
@@ -3737,48 +3811,22 @@ bool rt_create(Renderer* r, RenderTarget* rt, const RenderTargetSpec* spec)
         (void)spec->debug_name;  // for future VK_EXT_debug_utils
     }
 
-    uint32_t id;
+    rt->bindless_index = bindless_register_view(r, rt->view, spec->usage);
+    if(rt->bindless_index == UINT32_MAX)
+        return false;
 
-    if(!mu_id_pool_create_id(&texture_pool, &id))
+    if(rt->mip_count == 1)
     {
-        fprintf(stderr, "Texture pool exhausted\n");
-        return UINT32_MAX;
+        rt->mip_bindless_index[0] = rt->bindless_index;
     }
-    rt->bindless_index = id;
-
-    if(spec->usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+    else
     {
-        VkDescriptorImageInfo img = {.imageView = rt->view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
-
-        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-
-                                      .dstSet          = r->bindless_system.set,
-                                      .dstBinding      = BINDLESS_TEXTURE_BINDING,
-                                      .dstArrayElement = id,
-
-                                      .descriptorCount = 1,
-                                      .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                      .pImageInfo      = &img};
-
-        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
-    }
-    if(spec->usage & VK_IMAGE_USAGE_STORAGE_BIT)
-    {
-
-
-        VkDescriptorImageInfo img = {.imageView = rt->view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
-
-        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-
-                                      .dstSet          = r->bindless_system.set,
-                                      .dstBinding      = BINDLESS_STORAGE_IMAGE_BINDING,
-                                      .dstArrayElement = id,
-
-                                      .descriptorCount = 1,
-                                      .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                      .pImageInfo      = &img};
-
-        vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+        for(uint32_t mip = 0; mip < rt->mip_count; ++mip)
+        {
+            rt->mip_bindless_index[mip] = bindless_register_view(r, rt->mip_views[mip], spec->usage);
+            if(rt->mip_bindless_index[mip] == UINT32_MAX)
+                return false;
+        }
     }
 
     log_info("[rt_create] %ux%u fmt=%d mips=%u ", rt->width, rt->height, rt->format, rt->mip_count);
@@ -3790,43 +3838,13 @@ void rt_destroy(Renderer* r, RenderTarget* rt)
     if(!r || !rt || !rt->image)
         return;
     vkDeviceWaitIdle(r->device);
-    uint32_t id = rt->bindless_index;
-
-    if(id != UINT32_MAX)
+    bindless_clear_view(r, rt->bindless_index, rt->usage);
+    if(rt->mip_count > 1)
     {
-        // Clear sampled descriptor if used
-        if(rt->usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+        for(uint32_t mip = 0; mip < rt->mip_count; ++mip)
         {
-            VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
-
-            VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                          .dstSet          = r->bindless_system.set,
-                                          .dstBinding      = BINDLESS_TEXTURE_BINDING,
-                                          .dstArrayElement = id,
-                                          .descriptorCount = 1,
-                                          .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                                          .pImageInfo      = &img};
-
-            vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+            bindless_clear_view(r, rt->mip_bindless_index[mip], rt->usage);
         }
-
-        // Clear storage descriptor if used
-        if(rt->usage & VK_IMAGE_USAGE_STORAGE_BIT)
-        {
-            VkDescriptorImageInfo img = {.imageView = textures[r->dummy_texture].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
-
-            VkWriteDescriptorSet write = {.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                          .dstSet          = r->bindless_system.set,
-                                          .dstBinding      = BINDLESS_STORAGE_IMAGE_BINDING,
-                                          .dstArrayElement = id,
-                                          .descriptorCount = 1,
-                                          .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                          .pImageInfo      = &img};
-
-            vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
-        }
-
-        mu_id_pool_destroy_id(&texture_pool, id);
     }
 
     if(rt->view)

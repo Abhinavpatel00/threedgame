@@ -1288,7 +1288,7 @@ int main(void)
                 rt_transition_all(cmd, &renderer.hdr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-                rt_transition_all(cmd, &renderer.bloom_chain[renderer.swapchain.current_image][0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                rt_transition_mip(cmd, &renderer.bloom_chain[renderer.swapchain.current_image], 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
                 image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_GENERAL,
@@ -1314,8 +1314,8 @@ int main(void)
 
             VkRenderingAttachmentInfo bloom_src = {
                 .sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView        = renderer.bloom_chain[renderer.swapchain.current_image][0].view,
-                .imageLayout      = renderer.bloom_chain[renderer.swapchain.current_image][0].mip_states[0].layout,
+                .imageView        = renderer.bloom_chain[renderer.swapchain.current_image].mip_views[0],
+                .imageLayout      = renderer.bloom_chain[renderer.swapchain.current_image].mip_states[0].layout,
                 .loadOp           = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .storeOp          = VK_ATTACHMENT_STORE_OP_STORE,
                 .clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}},

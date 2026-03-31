@@ -325,7 +325,8 @@ typedef struct RenderTarget
 
     ImageState mip_states[RT_MAX_MIPS];
 
-    uint32_t bindless_index;  // shared index for sampled/storage
+    uint32_t bindless_index;                       // full-chain view for sampled/storage
+    uint32_t mip_bindless_index[RT_MAX_MIPS];      // per-mip view indices (sampled/storage)
 
     const char* debug_name;
 
@@ -464,7 +465,7 @@ Frustum frustum;
     RenderTarget hdr_color[MAX_SWAPCHAIN_IMAGES];
     RenderTarget dof_half[MAX_SWAPCHAIN_IMAGES];
     RenderTarget ldr_color[MAX_SWAPCHAIN_IMAGES];
-    RenderTarget bloom_chain[MAX_SWAPCHAIN_IMAGES][BLOOM_MIPS];
+    RenderTarget bloom_chain[MAX_SWAPCHAIN_IMAGES];
     RenderTarget smaa_edges[MAX_SWAPCHAIN_IMAGES];
     RenderTarget smaa_weights[MAX_SWAPCHAIN_IMAGES];
 
