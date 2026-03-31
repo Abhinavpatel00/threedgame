@@ -73,11 +73,7 @@ void cs_main(uint3 id : SV_DispatchThreadID)
 
     float2 uv = (float2(pix) + 0.5f) / float2(push.width, push.height);
 
-    float3 color;
-    if(push.first_pass != 0)
-        color = sample_input_13_tap(src, samplers[push.sampler_id], uv, texel);
-    else
-        color = sample_input_4_tap(src, samplers[push.sampler_id], uv, texel);
+    float3 color = sample_input_4_tap(src, samplers[push.sampler_id], uv, texel);
 
     if(push.first_pass != 0)
     {

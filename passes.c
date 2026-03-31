@@ -143,8 +143,6 @@ static void pass_bloom(uint32_t current_image)
 
     GPU_SCOPE(frame_prof, cmd, "BLOOM", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
     {
-        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.bloom_chain[current_image][0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
@@ -158,19 +156,19 @@ static void pass_bloom(uint32_t current_image)
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.bloom_downsample]);
 
-        const float bloom_threshold = 1.0f;
+        const float bloom_threshold = 0.0f;
         const float bloom_knee      = 0.25f;
 
         for(uint32_t mip = 1; mip < BLOOM_MIPS; ++mip)
         {
             RenderTarget* dst = &renderer.bloom_chain[current_image][mip];
-            RenderTarget* src = (mip == 1) ? &renderer.hdr_color[current_image] : &renderer.bloom_chain[current_image][mip - 1];
+            RenderTarget* src = (mip == 1) ? &renderer.bloom_chain[current_image][0] : &renderer.bloom_chain[current_image][mip - 1];
 
             BloomDownPush push  = {0};
             push.src_texture_id = src->bindless_index;
             push.output_image_id = dst->bindless_index;
             push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-            push.first_pass      = (mip == 1) ? 1u : 0u;
+            push.first_pass      = (mip == 1 && bloom_threshold > 0.0f) ? 1u : 0u;
             push.width           = dst->width;
             push.height          = dst->height;
             push.threshold       = bloom_threshold;
@@ -190,7 +188,7 @@ static void pass_bloom(uint32_t current_image)
         }
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.bloom_upsample]);
-        for(uint32_t mip = BLOOM_MIPS - 1; mip > 0; --mip)
+        for(uint32_t mip = BLOOM_MIPS - 1; mip > 1; --mip)
         {
             RenderTarget* src = &renderer.bloom_chain[current_image][mip];
             RenderTarget* dst = &renderer.bloom_chain[current_image][mip - 1];
@@ -276,7 +274,7 @@ void            post_pass()
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.dof_half[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        rt_transition_all(cmd, &renderer.bloom_chain[current_image][0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        rt_transition_all(cmd, &renderer.bloom_chain[current_image][1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.ldr_color[current_image], VK_IMAGE_LAYOUT_GENERAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -289,7 +287,7 @@ void            post_pass()
         pp_push.dof_texture_id   = renderer.dof_half[current_image].bindless_index;
         pp_push.output_image_id  = renderer.ldr_color[current_image].bindless_index;
         pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-        pp_push.bloom_texture_id = renderer.bloom_chain[current_image][0].bindless_index;
+        pp_push.bloom_texture_id = renderer.bloom_chain[current_image][1].bindless_index;
         pp_push.bloom_intensity  = g_postfx_settings.bloom_intensity;
         pp_push.width           = renderer.swapchain.extent.width;
         pp_push.height          = renderer.swapchain.extent.height;
