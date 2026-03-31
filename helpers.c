@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 uint32_t hash32_bytes(const void* data, size_t size)
 {
@@ -145,4 +146,43 @@ bool segment_aabb_intersect(const vec3 p0, const vec3 p1, const vec3 b_center, c
     }
 
     return true;
+}
+
+void build_aabb_wireframe(const vec3 center, const vec3 half, vec3 out_positions[8], uint32_t out_indices[24])
+{
+    if(!out_positions || !out_indices)
+        return;
+
+    float x0 = center[0] - half[0];
+    float x1 = center[0] + half[0];
+    float y0 = center[1] - half[1];
+    float y1 = center[1] + half[1];
+    float z0 = center[2] - half[2];
+    float z1 = center[2] + half[2];
+
+    glm_vec3_copy((vec3){x0, y0, z0}, out_positions[0]);
+    glm_vec3_copy((vec3){x1, y0, z0}, out_positions[1]);
+    glm_vec3_copy((vec3){x0, y1, z0}, out_positions[2]);
+    glm_vec3_copy((vec3){x1, y1, z0}, out_positions[3]);
+    glm_vec3_copy((vec3){x0, y0, z1}, out_positions[4]);
+    glm_vec3_copy((vec3){x1, y0, z1}, out_positions[5]);
+    glm_vec3_copy((vec3){x0, y1, z1}, out_positions[6]);
+    glm_vec3_copy((vec3){x1, y1, z1}, out_positions[7]);
+
+    static const uint32_t k_indices[24] = {
+        0, 1,
+        1, 3,
+        3, 2,
+        2, 0,
+        4, 5,
+        5, 7,
+        7, 6,
+        6, 4,
+        0, 4,
+        1, 5,
+        2, 6,
+        3, 7,
+    };
+
+    memcpy(out_indices, k_indices, sizeof(k_indices));
 }

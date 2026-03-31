@@ -23,6 +23,13 @@ static bool take_screenshot;
 
 
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;);
+PUSH_CONSTANT(DebugLinePush,
+              VkDeviceAddress pos_ptr;
+              VkDeviceAddress idx_ptr;
+              mat4 model;
+              vec4 color;
+              uint32_t index_count;
+              uint32_t _pad0[3];);
 
 typedef struct GltfIndirectDrawData
 {
@@ -167,7 +174,6 @@ typedef struct ObstacleInstance
     vec3              size;
     vec3              half_extents;
 } ObstacleInstance;
-
 
 typedef struct Draw3DDesc
 {
@@ -1816,6 +1822,40 @@ static bool aabb_overlap(const vec3 a_pos, const vec3 a_half, const vec3 b_pos, 
     return true;
 }
 
+static void debug_draw_line_list(VkCommandBuffer cmd, const vec3* positions, uint32_t pos_count,
+                                 const uint32_t* indices, uint32_t index_count, const vec4 color)
+{
+    if(!positions || !indices || pos_count == 0 || index_count == 0)
+        return;
+
+    BufferSlice pos_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(vec3) * pos_count, 16);
+    BufferSlice idx_slice = buffer_pool_alloc(&renderer.cpu_pool, sizeof(uint32_t) * index_count, 4);
+    if(pos_slice.buffer == VK_NULL_HANDLE || idx_slice.buffer == VK_NULL_HANDLE)
+        return;
+
+    memcpy(pos_slice.mapped, positions, sizeof(vec3) * pos_count);
+    memcpy(idx_slice.mapped, indices, sizeof(uint32_t) * index_count);
+
+    DebugLinePush push = {0};
+    push.pos_ptr = slice_device_address(&renderer, pos_slice);
+    push.idx_ptr = slice_device_address(&renderer, idx_slice);
+    glm_mat4_identity(push.model);
+    glm_vec4_copy(color, push.color);
+    push.index_count = index_count;
+
+    vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(DebugLinePush), &push);
+    vkCmdDraw(cmd, index_count, 1, 0, 0);
+}
+
+static void debug_draw_aabb(VkCommandBuffer cmd, const vec3 center, const vec3 half, const vec4 color)
+{
+    vec3     positions[8];
+    uint32_t indices[24];
+
+    build_aabb_wireframe(center, half, positions, indices);
+    debug_draw_line_list(cmd, positions, 8, indices, 24, color);
+}
+
 static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
 {
     if(!desc || !out_instance)
@@ -2352,6 +2392,7 @@ int main(void)
     const char* player_idle_anim  = "idle";
     const char* player_move_anim  = "run";
     bool        game_paused       = false;
+    bool        collision_debug   = false;
     vec3        player_pos        = {0.0f, 0.0f, 0.0f};
     vec3        prev_player_pos   = {0.0f, 0.0f, 0.0f};
     vec3        player_half       = {0.35f, 0.8f, 0.35f};
@@ -2484,6 +2525,7 @@ int main(void)
         }
 
         bool        hit_obstacle            = false;
+        int         hit_obstacle_index      = -1;
         const float obstacle_despawn_behind = 6.0f;
 
         for(uint32_t i = 0; i < obstacle_count; ++i)
@@ -2504,6 +2546,7 @@ int main(void)
             if(segment_aabb_intersect(prev_player_pos, player_pos, obs->instance.position, expanded_half))
             {
                 hit_obstacle = true;
+                hit_obstacle_index = (int)i;
                 break;
             }
         }
@@ -2617,6 +2660,44 @@ int main(void)
                 draw_gltf_model(cmd, &player.model);
                 for(uint32_t i = 0; i < obstacle_count; ++i)
                     draw_gltf_model(cmd, &obstacles[i].instance.model);
+
+                if(collision_debug)
+                {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.triangle_wireframe]);
+                    vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
+
+                    vec4 player_color = {0.2f, 0.7f, 1.0f, 1.0f};
+                    vec4 sweep_color  = {1.0f, 1.0f, 1.0f, 1.0f};
+                    vec4 hit_color    = {1.0f, 0.2f, 0.2f, 1.0f};
+                    vec4 obs_color    = {0.2f, 1.0f, 0.4f, 1.0f};
+                    vec4 expand_color = {1.0f, 0.85f, 0.2f, 1.0f};
+
+                    debug_draw_aabb(cmd, player_pos, player_half, player_color);
+
+                    for(uint32_t i = 0; i < obstacle_count; ++i)
+                    {
+                        ObstacleInstance* obs = &obstacles[i];
+                        vec4 color;
+                        if(hit_obstacle && (int)i == hit_obstacle_index)
+                            glm_vec4_copy(hit_color, color);
+                        else
+                            glm_vec4_copy(obs_color, color);
+                        debug_draw_aabb(cmd, obs->instance.position, obs->half_extents, color);
+
+                        vec3 expanded_half = {
+                            obs->half_extents[0] + player_half[0],
+                            obs->half_extents[1] + player_half[1],
+                            obs->half_extents[2] + player_half[2],
+                        };
+                        debug_draw_aabb(cmd, obs->instance.position, expanded_half, expand_color);
+                    }
+
+                    vec3 sweep_positions[2];
+                    uint32_t sweep_indices[2] = {0, 1};
+                    glm_vec3_copy(prev_player_pos, sweep_positions[0]);
+                    glm_vec3_copy(player_pos, sweep_positions[1]);
+                    debug_draw_line_list(cmd, sweep_positions, 2, sweep_indices, 2, sweep_color);
+                }
                 vkCmdEndRendering(cmd);
             }
 
@@ -2642,6 +2723,10 @@ int main(void)
                 igText("FPS: %.1f", cpu_frame_ms > 0.0 ? 1000.0 / cpu_frame_ms : 0.0);
                 igText("Score (distance): %.1f", score_distance);
                 igText("Speed: %.2f", fabsf(player_vel_z));
+
+                igSeparator();
+                igText("Collision Debug");
+                igCheckbox("Show collision volumes", &collision_debug);
 
                 igSeparator();
                 igSeparator();

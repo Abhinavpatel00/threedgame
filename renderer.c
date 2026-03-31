@@ -196,13 +196,15 @@ void gfx_pipelines()
         }
         {
             GraphicsPipelineConfig cfg   = pipeline_config_default();
-            cfg.vert_path                = "compiledshaders/triangle.vert.spv";
-            cfg.frag_path                = "compiledshaders/triangle.frag.spv";
-            cfg.color_attachment_count   = 1;
-            cfg.color_formats            = &renderer.hdr_color[1].format;
+            VkFormat               debug_color_formats[2] = {renderer.hdr_color[1].format, renderer.bloom_chain[1].format};
+            cfg.vert_path                = "compiledshaders/debug_lines.vert.spv";
+            cfg.frag_path                = "compiledshaders/debug_lines.frag.spv";
+            cfg.color_attachment_count   = 2;
+            cfg.color_formats            = debug_color_formats;
             cfg.depth_format             = renderer.depth[1].format;
-            cfg.polygon_mode             = VK_POLYGON_MODE_LINE;
-            cfg.topology                 = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+            cfg.depth_test_enable        = false;
+            cfg.depth_write_enable       = false;
+            cfg.topology                 = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
             pipelines.triangle_wireframe = pipeline_create_graphics(&renderer, &cfg);
         }
 

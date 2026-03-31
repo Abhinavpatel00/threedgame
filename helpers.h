@@ -3,6 +3,8 @@
 
 #include "vk_default.h"
 
+#include <stdint.h>
+
 #ifndef CGLM_ALL_UNALIGNED
 #define CGLM_ALL_UNALIGNED
 #endif
@@ -19,6 +21,9 @@ void compose_transform_pos_rot(const vec3 position, const vec3 rotation, mat4 ou
 
 // Segment vs axis-aligned box intersection (box is center + half extents).
 bool segment_aabb_intersect(const vec3 p0, const vec3 p1, const vec3 b_center, const vec3 b_half);
+
+// Fill positions + indices for a line-list AABB wireframe.
+void build_aabb_wireframe(const vec3 center, const vec3 half, vec3 out_positions[8], uint32_t out_indices[24]);
 
 /*
 

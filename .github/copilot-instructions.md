@@ -44,6 +44,8 @@
 - Avoid redundant transitions and unnecessary full-resolution passes.
 - Prefer half-resolution/intermediate reuse for expensive post effects when quality allows.
 - Keep hot-path branches and per-pixel work minimal.
+- remember to keep push constant  sixteen byte aligned 
+	
 
 ## Where to look first
 
