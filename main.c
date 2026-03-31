@@ -1165,9 +1165,12 @@ int main(void)
     }
 
     Input  input             = {0};
+    ActionMap actions        = {0};
     double prev_time_seconds = glfwGetTime();
 
     input_init(&input);
+    input_attach(&input, renderer.window);
+    input_actions_default(&actions);
 
     while(!glfwWindowShouldClose(renderer.window))
     {
@@ -1182,9 +1185,11 @@ int main(void)
 
         input_update(&input, renderer.window);
 
-        if(input_pressed(&input, KEY_1) || input_pressed(&input, KEY_2))
+        bool load_model_1 = input_action_pressed(&input, &actions, ACTION_LOAD_MODEL_1);
+        bool load_model_2 = input_action_pressed(&input, &actions, ACTION_LOAD_MODEL_2);
+        if(load_model_1 || load_model_2)
         {
-            const char* model_dir  = input_pressed(&input, KEY_1) ? PETS_DIR : BLOCKY_DIR;
+            const char* model_dir  = load_model_1 ? PETS_DIR : BLOCKY_DIR;
             char**      next_paths = NULL;
             uint32_t    next_count = 0;
             if(collect_glb_paths(model_dir, &next_paths, &next_count))
@@ -1207,38 +1212,38 @@ int main(void)
             }
         }
 
-        if(input_pressed(&input, KEY_SPACE))
+        if(input_action_pressed(&input, &actions, ACTION_TOGGLE_PAUSE))
         {
             bool pause_state = !instances[0].animation_paused;
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_paused = pause_state;
         }
 
-        if(input_pressed(&input, KEY_RIGHT))
+        if(input_action_pressed(&input, &actions, ACTION_CYCLE_ANIM_NEXT))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 cycle_animation_clip(&instances[i], 1);
         }
 
-        if(input_pressed(&input, KEY_LEFT))
+        if(input_action_pressed(&input, &actions, ACTION_CYCLE_ANIM_PREV))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 cycle_animation_clip(&instances[i], -1);
         }
 
-        if(input_pressed(&input, KEY_R))
+        if(input_action_pressed(&input, &actions, ACTION_RESET_ANIM))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_time = 0.0f;
         }
 
-        if(input_pressed(&input, KEY_UP))
+        if(input_action_pressed(&input, &actions, ACTION_SPEED_UP))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_speed = glm_min(instances[i].animation_speed + 0.25f, 4.0f);
         }
 
-        if(input_pressed(&input, KEY_DOWN))
+        if(input_action_pressed(&input, &actions, ACTION_SPEED_DOWN))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_speed = glm_max(instances[i].animation_speed - 0.25f, 0.25f);
