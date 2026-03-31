@@ -266,6 +266,23 @@ static void cycle_animation_clip(GltfSceneInstance* instance, int delta)
     instance->animation_time  = 0.0f;
 }
 
+static uint32_t find_animation_by_name(const GltfSceneInstance* instance, const char* name, uint32_t fallback)
+{
+    if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
+        return fallback;
+
+    if(!name || name[0] == '\0')
+        return fallback;
+
+    for(uint32_t i = 0; i < instance->model.cpu->animation_count; ++i)
+    {
+        if(strcmp(instance->model.cpu->animations[i].name, name) == 0)
+            return i;
+    }
+
+    return fallback;
+}
+
 static void update_animation_time(GltfSceneInstance* instance, float delta_seconds)
 {
     if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
@@ -1167,6 +1184,13 @@ int main(void)
     Input  input             = {0};
     ActionMap actions        = {0};
     double prev_time_seconds = glfwGetTime();
+    float       player_vel_x      = 0.0f;
+    float       player_vel_z      = 0.0f;
+    float       player_speed      = 2.5f;
+    float       player_accel      = 10.0f;
+    float       player_friction   = 8.0f;
+    const char* player_idle_anim  = "idle";
+    const char* player_move_anim  = "walk";
 
     input_init(&input);
     input_attach(&input, renderer.window);
@@ -1219,34 +1243,60 @@ int main(void)
                 instances[i].animation_paused = pause_state;
         }
 
-        if(input_action_pressed(&input, &actions, ACTION_CYCLE_ANIM_NEXT))
-        {
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                cycle_animation_clip(&instances[i], 1);
-        }
-
-        if(input_action_pressed(&input, &actions, ACTION_CYCLE_ANIM_PREV))
-        {
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                cycle_animation_clip(&instances[i], -1);
-        }
-
         if(input_action_pressed(&input, &actions, ACTION_RESET_ANIM))
         {
             for(uint32_t i = 0; i < loaded_count; ++i)
                 instances[i].animation_time = 0.0f;
         }
 
-        if(input_action_pressed(&input, &actions, ACTION_SPEED_UP))
+        if(loaded_count > 0)
         {
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                instances[i].animation_speed = glm_min(instances[i].animation_speed + 0.25f, 4.0f);
-        }
+            float move_x = 0.0f;
+            float move_z = 0.0f;
+            input_get_move_vector(&input, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, &move_x, &move_z);
 
-        if(input_action_pressed(&input, &actions, ACTION_SPEED_DOWN))
-        {
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                instances[i].animation_speed = glm_max(instances[i].animation_speed - 0.25f, 0.25f);
+            float desired_vx = move_x * player_speed;
+            float desired_vz = move_z * player_speed;
+
+            player_vel_x += (desired_vx - player_vel_x) * player_accel * frame_delta_seconds;
+            player_vel_z += (desired_vz - player_vel_z) * player_accel * frame_delta_seconds;
+
+            if(move_x == 0.0f && move_z == 0.0f)
+            {
+                float decay = 1.0f - player_friction * frame_delta_seconds;
+                if(decay < 0.0f)
+                    decay = 0.0f;
+                else if(decay > 1.0f)
+                    decay = 1.0f;
+                player_vel_x *= decay;
+                player_vel_z *= decay;
+            }
+
+            instances[0].position[0] += player_vel_x * frame_delta_seconds;
+            instances[0].position[2] += player_vel_z * frame_delta_seconds;
+            instances[0].position[1] = 0.0f;
+
+            float speed = sqrtf(player_vel_x * player_vel_x + player_vel_z * player_vel_z);
+            if(instances[0].model.cpu && instances[0].model.cpu->animation_count > 0 && !instances[0].animation_paused)
+            {
+                uint32_t idle_index = find_animation_by_name(&instances[0], player_idle_anim, 0);
+                uint32_t move_index = find_animation_by_name(&instances[0], player_move_anim, idle_index);
+
+                if(speed > 0.05f)
+                {
+                    if(instances[0].animation_index != move_index)
+                        instances[0].animation_time = 0.0f;
+                    instances[0].animation_index = move_index;
+                    instances[0].animation_speed = 1.0f;
+                }
+                else
+                {
+                    if(instances[0].animation_index != idle_index)
+                        instances[0].animation_time = 0.0f;
+                    instances[0].animation_index = idle_index;
+                    instances[0].animation_speed = 1.0f;
+                }
+            }
         }
 
         for(uint32_t i = 0; i < loaded_count; ++i)

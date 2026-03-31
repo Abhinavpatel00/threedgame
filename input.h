@@ -16,7 +16,7 @@ typedef enum
     KEY_2,
 
     KEY_COUNT
-} KeyCode;
+} InputKey;
 
 typedef enum
 {
@@ -61,7 +61,7 @@ typedef struct
 
 typedef struct
 {
-    KeyCode key;
+    InputKey key;
 } ActionBinding;
 
 typedef struct
@@ -87,15 +87,15 @@ void input_update(Input* in, struct GLFWwindow* window);
 void input_on_scroll(Input* in, double xoffset, double yoffset);
 
 void input_actions_default(ActionMap* map);
-void input_action_bind(ActionMap* map, ActionCode action, KeyCode key);
+void input_action_bind(ActionMap* map, ActionCode action, InputKey key);
 
 bool input_action_down(const Input* in, const ActionMap* map, ActionCode action);
 bool input_action_pressed(const Input* in, const ActionMap* map, ActionCode action);
 bool input_action_released(const Input* in, const ActionMap* map, ActionCode action);
 
-void input_get_move_vector(const Input* in, KeyCode left, KeyCode right, KeyCode up, KeyCode down, float* out_x,
+void input_get_move_vector(const Input* in, InputKey left, InputKey right, InputKey up, InputKey down, float* out_x,
                            float* out_z);
 
-bool input_down(const Input* in, KeyCode key);
-bool input_pressed(const Input* in, KeyCode key);
-bool input_released(const Input* in, KeyCode key);
+bool input_down(const Input* in, InputKey key);
+bool input_pressed(const Input* in, InputKey key);
+bool input_released(const Input* in, InputKey key);

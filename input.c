@@ -5,7 +5,7 @@
 
 #include <GLFW/glfw3.h>
 
-static int keycode_to_glfw(KeyCode key)
+static int keycode_to_glfw(InputKey key)
 {
     switch(key)
     {
@@ -81,7 +81,7 @@ void input_update(Input* in, struct GLFWwindow* window)
         KeyState* k = &in->keys[i];
         k->prev = k->curr;
 
-        int glfw_key = keycode_to_glfw((KeyCode)i);
+        int glfw_key = keycode_to_glfw((InputKey)i);
         if(!window || glfw_key == 0)
         {
             k->curr = false;
@@ -165,7 +165,7 @@ void input_actions_default(ActionMap* map)
     input_action_bind(map, ACTION_TOGGLE_PAUSE, KEY_SPACE);
 }
 
-void input_action_bind(ActionMap* map, ActionCode action, KeyCode key)
+void input_action_bind(ActionMap* map, ActionCode action, InputKey key)
 {
     if(!map || action >= ACTION_COUNT || key >= KEY_COUNT)
         return;
@@ -178,7 +178,7 @@ bool input_action_down(const Input* in, const ActionMap* map, ActionCode action)
     if(!in || !map || action >= ACTION_COUNT)
         return false;
 
-    KeyCode key = map->bindings[action].key;
+    InputKey key = map->bindings[action].key;
     if(key >= KEY_COUNT)
         return false;
 
@@ -190,7 +190,7 @@ bool input_action_pressed(const Input* in, const ActionMap* map, ActionCode acti
     if(!in || !map || action >= ACTION_COUNT)
         return false;
 
-    KeyCode key = map->bindings[action].key;
+    InputKey key = map->bindings[action].key;
     if(key >= KEY_COUNT)
         return false;
 
@@ -202,14 +202,14 @@ bool input_action_released(const Input* in, const ActionMap* map, ActionCode act
     if(!in || !map || action >= ACTION_COUNT)
         return false;
 
-    KeyCode key = map->bindings[action].key;
+    InputKey key = map->bindings[action].key;
     if(key >= KEY_COUNT)
         return false;
 
     return input_released(in, key);
 }
 
-void input_get_move_vector(const Input* in, KeyCode left, KeyCode right, KeyCode up, KeyCode down, float* out_x,
+void input_get_move_vector(const Input* in, InputKey left, InputKey right, InputKey up, InputKey down, float* out_x,
                            float* out_z)
 {
     if(!out_x || !out_z)
@@ -241,7 +241,7 @@ void input_get_move_vector(const Input* in, KeyCode left, KeyCode right, KeyCode
     *out_z = move_z;
 }
 
-bool input_down(const Input* in, KeyCode key)
+bool input_down(const Input* in, InputKey key)
 {
     if(!in || key >= KEY_COUNT)
         return false;
@@ -249,7 +249,7 @@ bool input_down(const Input* in, KeyCode key)
     return in->keys[key].curr;
 }
 
-bool input_pressed(const Input* in, KeyCode key)
+bool input_pressed(const Input* in, InputKey key)
 {
     if(!in || key >= KEY_COUNT)
         return false;
@@ -258,7 +258,7 @@ bool input_pressed(const Input* in, KeyCode key)
     return k.curr && !k.prev;
 }
 
-bool input_released(const Input* in, KeyCode key)
+bool input_released(const Input* in, InputKey key)
 {
     if(!in || key >= KEY_COUNT)
         return false;
