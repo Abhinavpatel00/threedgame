@@ -47,6 +47,7 @@ struct VSOutput
     float2 uv : TEXCOORD2;
     nointerpolation uint material_id : TEXCOORD3;
     nointerpolation uint object_id : TEXCOORD4;
+    nointerpolation uint draw_flags : TEXCOORD5;
 };
 
 struct FSOutput
@@ -202,6 +203,7 @@ VSOutput vs_main(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
     o.uv = uv;
     o.material_id = draw.material_id;
     o.object_id = drawID + 1u;
+    o.draw_flags = draw.flags;
 
     return o;
 }
@@ -255,6 +257,7 @@ FSOutput fs_main(VSOutput i)
     float3 color = diffuse + specular + fill + emissive;
     o.color = float4(color, base_color.a);
 
-    o.toon_data = (i.object_id == 1u) ? float4(max(color * 2.0, 0.0.xxx), 1.0) : float4(0.0, 0.0, 0.0, 1.0);
+    bool bloom_enabled = (i.draw_flags & 0x8u) != 0u;
+    o.toon_data = bloom_enabled ? float4(max(color * 2.0, 0.0.xxx), 1.0) : float4(0.0, 0.0, 0.0, 1.0);
     return o;
 }

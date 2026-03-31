@@ -127,11 +127,23 @@ typedef struct GltfSceneInstance
 {
     GltfGpuModel model;
     vec3         position;
+    bool         bloom_enabled;
     uint32_t     animation_index;
     float        animation_time;
     float        animation_speed;
     bool         animation_paused;
 } GltfSceneInstance;
+
+typedef struct Draw3DDesc
+{
+    const char* gltf_path;
+    vec3        position;
+    bool        bloom_enabled;
+    uint32_t    animation_index;
+    float       animation_time;
+    float       animation_speed;
+    bool        animation_paused;
+} Draw3DDesc;
 
 static int cmp_string_ptrs(const void* a, const void* b)
 {
@@ -687,6 +699,41 @@ static void destroy_scene_instances(GltfSceneInstance* instances, uint32_t loade
     free(instances);
 }
 
+static bool draw_3d_create_instance(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
+{
+    if(!desc || !out_instance || !desc->gltf_path)
+        return false;
+
+    memset(out_instance, 0, sizeof(*out_instance));
+
+    if(!gltf_gpu_model_init(&out_instance->model, desc->gltf_path))
+        return false;
+
+    out_instance->position[0] = desc->position[0];
+    out_instance->position[1] = desc->position[1];
+    out_instance->position[2] = desc->position[2];
+    out_instance->bloom_enabled   = desc->bloom_enabled;
+    out_instance->animation_index = desc->animation_index;
+    out_instance->animation_time  = desc->animation_time;
+    out_instance->animation_speed = desc->animation_speed;
+    out_instance->animation_paused = desc->animation_paused;
+
+    if(out_instance->model.cpu && out_instance->model.cpu->animation_count > 0)
+    {
+        if(out_instance->animation_index >= out_instance->model.cpu->animation_count)
+            out_instance->animation_index = 0;
+    }
+    else
+    {
+        out_instance->animation_index = 0;
+        out_instance->animation_time  = 0.0f;
+        out_instance->animation_speed = 1.0f;
+        out_instance->animation_paused = true;
+    }
+
+    return true;
+}
+
 static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfSceneInstance** out_instances, uint32_t* out_loaded_count)
 {
     *out_instances    = NULL;
@@ -702,21 +749,24 @@ static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfScen
     uint32_t loaded_count = 0;
     for(uint32_t i = 0; i < glb_count; ++i)
     {
-        if(!gltf_gpu_model_init(&instances[loaded_count].model, glb_paths[i]))
-            continue;
-
         uint32_t col    = loaded_count % GRID_COLUMNS;
         uint32_t row    = loaded_count / GRID_COLUMNS;
         float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
 
-        instances[loaded_count].position[0] = (float)col * GRID_SPACING_X - 0.5f * grid_w;
-        instances[loaded_count].position[1] = 0.0f;
-        instances[loaded_count].position[2] = -(float)row * GRID_SPACING_Z;
+        Draw3DDesc desc = {0};
+        desc.gltf_path        = glb_paths[i];
+        desc.position[0]      = (float)col * GRID_SPACING_X - 0.5f * grid_w;
+        desc.position[1]      = 0.0f;
+        desc.position[2]      = -(float)row * GRID_SPACING_Z;
+        desc.bloom_enabled    = false;
+        desc.animation_index  = 0;
+        desc.animation_time   = 0.0f;
+        desc.animation_speed  = 1.0f;
+        desc.animation_paused = false;
 
-        instances[loaded_count].animation_index  = 0;
-        instances[loaded_count].animation_time   = 0.0f;
-        instances[loaded_count].animation_speed  = 1.0f;
-        instances[loaded_count].animation_paused = false;
+        if(!draw_3d_create_instance(&desc, &instances[loaded_count]))
+            continue;
+
         ++loaded_count;
     }
 
@@ -1000,6 +1050,8 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
         draw->skin_offset = 0;
 
         draw->flags    = 0;
+        if(instance->bloom_enabled)
+            draw->flags |= 0x8u;
         u32 node_index = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
             glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], draw->model);
