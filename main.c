@@ -1354,8 +1354,8 @@ int main(void)
                 vkCmdEndRendering(cmd);
             }
 
+            pass_toon_outline();
             post_pass();
-            //      pass_toon();
             pass_smaa();
             pass_ldr_to_swapchain();
 

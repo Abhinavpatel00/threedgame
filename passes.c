@@ -49,8 +49,66 @@ PUSH_CONSTANT(BlendPush, uint32_t color_tex; uint32_t weight_tex; uint32_t sampl
 
 PUSH_CONSTANT(WeightPush, uint32_t edge_tex; uint32_t area_tex; uint32_t search_tex; uint32_t sampler_id;);
 
+PUSH_CONSTANT(ToonOutlinePush,
+              uint32_t depth_tex;
+              uint32_t sampler_id;
+              float    inv_resolution[2];
+              float    depth_threshold;
+              float    edge_strength;);
+
 
 static uint32_t pp_frame_counter = 0;
+
+void pass_toon_outline()
+{
+    VkCommandBuffer cmd          = renderer.frames[renderer.current_frame].cmdbuf;
+    GpuProfiler*    frame_prof   = &renderer.gpuprofiler[renderer.current_frame];
+    uint32_t        current_image = renderer.swapchain.current_image;
+
+    GPU_SCOPE(frame_prof, cmd, "TOON_OUTLINE", VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT)
+    {
+        rt_transition_all(cmd, &renderer.depth[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT);
+        flush_barriers(cmd);
+
+        VkRenderingAttachmentInfo color = {
+            .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView   = renderer.hdr_color[current_image].view,
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+        };
+
+        VkRenderingInfo rendering = {
+            .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea.extent    = renderer.swapchain.extent,
+            .layerCount           = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments    = &color,
+        };
+
+        vkCmdBeginRendering(cmd, &rendering);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.toon_outline]);
+        vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
+
+        ToonOutlinePush push      = {0};
+        push.depth_tex            = renderer.depth[current_image].bindless_index;
+        push.sampler_id           = renderer.default_samplers.samplers[SAMPLER_NEAREST_CLAMP];
+        push.inv_resolution[0]    = 1.0f / (float)renderer.swapchain.extent.width;
+        push.inv_resolution[1]    = 1.0f / (float)renderer.swapchain.extent.height;
+        push.depth_threshold      = 0.0022f;
+        push.edge_strength        = 850.0f;
+
+        vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(ToonOutlinePush), &push);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        vkCmdEndRendering(cmd);
+    }
+}
 
 static void pass_bloom(uint32_t current_image)
 {
