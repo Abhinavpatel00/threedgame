@@ -283,6 +283,11 @@ static uint32_t find_animation_by_name(const GltfSceneInstance* instance, const 
     return fallback;
 }
 
+static double bytes_to_mib(VkDeviceSize bytes)
+{
+    return (double)bytes / (1024.0 * 1024.0);
+}
+
 static void update_animation_time(GltfSceneInstance* instance, float delta_seconds)
 {
     if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
@@ -1181,16 +1186,22 @@ int main(void)
         return 1;
     }
 
-    Input  input             = {0};
-    ActionMap actions        = {0};
-    double prev_time_seconds = glfwGetTime();
-    float       player_vel_x      = 0.0f;
-    float       player_vel_z      = 0.0f;
-    float       player_speed      = 2.5f;
-    float       player_accel      = 10.0f;
-    float       player_friction   = 8.0f;
-    const char* player_idle_anim  = "idle";
-    const char* player_move_anim  = "walk";
+    Input     input             = {0};
+    ActionMap actions           = {0};
+    double    prev_time_seconds = glfwGetTime();
+    float     player_vel_x      = 0.0f;
+    float     player_vel_z      = 0.0f;
+    float     player_speed      = 2.5f;
+    float     player_accel      = 10.0f;
+    float     player_friction   = 8.0f;
+    const char* player_idle_anim = "idle";
+    const char* player_move_anim = "walk";
+
+    VmaBudget memory_budgets[VK_MAX_MEMORY_HEAPS] = {0};
+    uint32_t  memory_heap_count = renderer.info.memory.memoryHeapCount;
+    double    memory_budget_last_update = -1.0;
+    double    memory_budget_interval_s = 2.0;
+    bool      memory_window_open = true;
 
     input_init(&input);
     input_attach(&input, renderer.window);
@@ -1453,6 +1464,52 @@ int main(void)
                 igSliderFloat("DoF Radius Scale", &g_postfx_settings.dof_rad_scale, 0.05f, 2.0f, "%.3f", 0);
 
                 igEnd();
+
+                if(igBegin("Memory Budget", &memory_window_open, 0))
+                {
+                    if(memory_window_open)
+                    {
+                        if(memory_budget_last_update < 0.0 || now_seconds - memory_budget_last_update >= memory_budget_interval_s)
+                        {
+                            vmaGetHeapBudgets(renderer.vmaallocator, memory_budgets);
+                            memory_budget_last_update = now_seconds;
+                        }
+
+                        VkDeviceSize total_usage = 0;
+                        VkDeviceSize total_budget = 0;
+                        VkDeviceSize total_alloc_bytes = 0;
+                        uint32_t total_alloc_count = 0;
+
+                        for(uint32_t i = 0; i < memory_heap_count; ++i)
+                        {
+                            total_usage += memory_budgets[i].usage;
+                            total_budget += memory_budgets[i].budget;
+                            total_alloc_bytes += memory_budgets[i].statistics.allocationBytes;
+                            total_alloc_count += memory_budgets[i].statistics.allocationCount;
+                        }
+
+                        igText("Total: usage %.2f MiB / budget %.2f MiB", bytes_to_mib(total_usage), bytes_to_mib(total_budget));
+                        igText("Total: alloc %.2f MiB, allocs %u", bytes_to_mib(total_alloc_bytes), total_alloc_count);
+                        igSeparator();
+
+                        for(uint32_t i = 0; i < memory_heap_count; ++i)
+                        {
+                            VmaBudget* b = &memory_budgets[i];
+                            double percent_used = 0.0;
+                            if(b->budget > 0)
+                                percent_used = (double)b->usage * 100.0 / (double)b->budget;
+                            igText("Heap %u", i);
+                            igText("  usage %.2f MiB / budget %.2f MiB (%.1f%%)", bytes_to_mib(b->usage),
+                                   bytes_to_mib(b->budget), percent_used);
+                            igText("  alloc %.2f MiB, allocs %u", bytes_to_mib(b->statistics.allocationBytes),
+                                   b->statistics.allocationCount);
+                            igText("  blocks %.2f MiB, blocks %u", bytes_to_mib(b->statistics.blockBytes),
+                                   b->statistics.blockCount);
+                        }
+                    }
+                }
+                igEnd();
+
                 igRender();
             }
             TracyCZoneEnd(imgui_zone);

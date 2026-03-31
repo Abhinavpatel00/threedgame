@@ -67,3 +67,6 @@
 - Don’t: introduce per-shader custom descriptor layouts.
 - Don’t: reintroduce vertex/index binding model for draw submission.
 - Don’t: duplicate common descriptor declarations across shaders.
+
+
+add helpers in helpers.h/.c for common tasks 
