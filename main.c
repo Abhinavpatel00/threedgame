@@ -17,6 +17,8 @@
 #define GRID_SPACING_Z 2.6f
 static bool take_screenshot;
 
+
+
 PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;);
 
 typedef struct GltfIndirectDrawData

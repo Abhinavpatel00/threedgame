@@ -1385,8 +1385,12 @@ static MU_INLINE void frame_start(Renderer* renderer, Camera* cam)
 
             rt_resize(renderer, &renderer->hdr_color[i], fb_w, fb_h);
             rt_resize(renderer, &renderer->dof_half[i], MAX(1u, fb_w / 2), MAX(1u, fb_h / 2));
+        
             rt_resize(renderer, &renderer->ldr_color[i], fb_w, fb_h);
-        }
+
+           rt_resize(renderer, &renderer->bloom_chain[i], fb_w, fb_h);
+
+	}
 
 
         renderer->swapchain.needs_recreate = false;
