@@ -1,46 +1,25 @@
 #include "text_baker.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "fs.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "external/stb/stb_truetype.h"
 
 static uint8_t* read_file_bytes(const char* path, size_t* out_size)
 {
-    FILE* file = fopen(path, "rb");
-    if(!file)
-        return NULL;
+    void*  data = NULL;
+    size_t size = 0;
 
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    if(file_size <= 0)
-    {
-        fclose(file);
+    if(!fs_read_all(path, &data, &size))
         return NULL;
-    }
-
-    uint8_t* data = malloc((size_t)file_size);
-    if(!data)
-    {
-        fclose(file);
-        return NULL;
-    }
-
-    size_t read_size = fread(data, 1, (size_t)file_size, file);
-    fclose(file);
-    if(read_size != (size_t)file_size)
-    {
-        free(data);
-        return NULL;
-    }
 
     if(out_size)
-        *out_size = (size_t)file_size;
+        *out_size = size;
 
-    return data;
+    return (uint8_t*)data;
 }
 
 bool text_bake_font_rgba(const char* font_path,

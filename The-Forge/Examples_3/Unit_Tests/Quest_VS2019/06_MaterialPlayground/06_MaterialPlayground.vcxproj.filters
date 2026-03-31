@@ -1,0 +1,163 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{9dd6478b-e6ed-495f-970c-0f9d6255865b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{3e95dd04-fff2-4bec-ba18-88fc16c8f0c2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FSLShaders">
+      <UniqueIdentifier>{fd1c1568-4263-4352-a771-011dff9d2319}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Misc">
+      <UniqueIdentifier>{87e933f7-c0f0-4337-990f-6f3cc5940ffa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{91e6725f-ba0b-4466-8de9-8816c84dae7a}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\06_MaterialPlayground\06_MaterialPlayground.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Capsules.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Hair.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PBR.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PerFrameSet.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PersistentSet.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Global.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Capsules.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Capsules.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\FullScreen.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Hair.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Hair.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairCommon.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairIntegrate.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairLengthConstraints.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairLocalConstraints.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairPreWarm.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShadow.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShadow.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShockPropagation.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShortCutClear.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShortCutDepthPeeling.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShortCutFillColor.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShortCutResolveColor.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairShortCutResolveDepth.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\HairUpdateFollowHairs.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PBR_BRDFIntegration.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PBR_ComputeIrradianceMap.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\PBR_ComputeSpecularMap.comp.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\RenderSceneBRDF.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\RenderSceneBRDF.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\RenderSceneBRDFResources.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\RenderSceneShadows.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\RenderSceneShadows.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Resources.comp.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Resources.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Shaders.list">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Skybox.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\06_MaterialPlayground\Shaders\FSL\Skybox.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <None Include="..\..\src\06_MaterialPlayground\GPUCfg\gpu.cfg">
+      <Filter>Misc</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\loadGroundTextures.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\loadModels.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\loadTextures.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\Test_Hair.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\Test_Metal.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\Test_Wood.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\06_MaterialPlayground\Scripts\updateCamera.lua">
+      <Filter>Scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>

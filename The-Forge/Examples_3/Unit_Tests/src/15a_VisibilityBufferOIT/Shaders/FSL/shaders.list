@@ -1,0 +1,269 @@
+#include "../../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+#comp clear_buffers.comp
+#include "TriangleFilteringClear.comp.fsl"
+#end
+
+#comp pre_skin_vertexes.comp
+#include "PreSkinVertexes.comp.fsl"
+#end
+
+#comp pre_skin_vertexes_async.comp
+#define PRE_SKIN_ASYNC_COMPUTE
+#include "PreSkinVertexes.comp.fsl"
+#end
+
+#comp triangle_filtering.comp
+#include "TriangleFiltering.comp.fsl"
+#end
+
+#if defined(DIRECT3D12) && !defined(TARGET_XBOX) && !defined(TARGET_SCARLETT)
+#graph gpu_pipeline.graph
+#include "TriangleFilteringGpuPipelineGraph.fsl"
+#end
+#endif
+
+#comp clear_light_clusters.comp
+#include "LightClustersClear.comp.fsl"
+#end
+
+#comp cluster_lights.comp
+#include "LightClusters.comp.fsl"
+#end
+
+#frag display.frag
+#include "Display.frag.fsl"
+#end
+
+#vert display.vert
+#include "Display.vert.fsl"
+#end
+
+#frag godray_SAMPLE_COUNT_1.frag
+#define SAMPLE_COUNT 1
+#include "Godray.frag.fsl"
+#end
+#frag godray_SAMPLE_COUNT_2.frag
+#define SAMPLE_COUNT 2
+#include "Godray.frag.fsl"
+#end
+#frag godray_SAMPLE_COUNT_4.frag
+#define SAMPLE_COUNT 4
+#include "Godray.frag.fsl"
+#end
+#frag godray_VRS.frag
+#define SAMPLE_COUNT 4
+#define USE_VRS 1
+#include "Godray.frag.fsl"
+#end
+
+#comp godray_blur.comp
+#include "GodrayBlur.comp.fsl"
+#end
+
+#frag oitClear.frag
+#include "OitClear.frag.fsl"
+#end
+
+#vert resolve.vert
+#include "Resolve.vert.fsl"
+#end
+
+#vert shadow_pass.vert
+#include "ShadowPass.vert.fsl"
+#end
+
+#frag shadow_pass_alpha.frag
+#include "ShadowPassAlpha.frag.fsl"
+#end
+
+#vert shadow_pass_alpha.vert
+#include "ShadowPassAlpha.vert.fsl"
+#end
+
+#frag shadow_pass_transparent.frag
+#include "ShadowPassTransparent.frag.fsl"
+#end
+
+#vert shadow_pass_transparent.vert
+#include "ShadowPassTransparent.vert.fsl"
+#end
+
+#frag Skybox.frag
+#include "Skybox.frag.fsl"
+#end
+
+#vert Skybox.vert
+#include "Skybox.vert.fsl"
+#end
+
+#vert FT_PRIM_ID visibilityBuffer_pass.vert
+#include "VisibilityBufferPass.vert.fsl"
+#end
+
+#frag FT_PRIM_ID visibilityBuffer_pass.frag
+#include "VisibilityBufferPass.frag.fsl"
+#end
+
+#vert FT_PRIM_ID visibilityBuffer_pass_alpha_vrs.vert
+#include "VisibilityBufferPassAlpha.vert.fsl"
+#end
+
+#vert FT_PRIM_ID visibilityBuffer_pass_alpha.vert
+#include "VisibilityBufferPassAlpha.vert.fsl"
+#end
+
+#frag FT_PRIM_ID visibilityBuffer_pass_alpha_vrs.frag
+#define USE_VRS 1
+#include "VisibilityBufferPassAlpha.frag.fsl"
+#end
+
+#frag FT_PRIM_ID visibilityBuffer_pass_alpha.frag
+#include "VisibilityBufferPassAlpha.frag.fsl"
+#end
+
+#vert FT_PRIM_ID visibilityBuffer_pass_transparent_ret.vert
+#include "VisibilityBufferPassTransparentRet.vert.fsl"
+#end
+
+#if !defined(ORBIS) && !defined(PROSPERO)
+#frag FT_PRIM_ID visibilityBuffer_pass_transparent_void.frag
+#include "VisibilityBufferPassTransparentVoid.frag.fsl"
+#end
+#endif
+
+#frag FT_PRIM_ID visibilityBuffer_pass_transparent_ret.frag
+#include "VisibilityBufferPassTransparentRet.frag.fsl"
+#end
+
+#vert visibilityBuffer_shade.vert
+#include "VisibilityBufferShade.vert.fsl"
+#end
+
+//--------------------------------------------
+//-- Visibility Buffer Shading
+//--------------------------------------------
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_1.frag
+#define SAMPLE_COUNT 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_1_GRAY.frag
+#define SAMPLE_COUNT 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_2.frag
+#define SAMPLE_COUNT 2
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_2_GRAY.frag
+#define SAMPLE_COUNT 2
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_4.frag
+#define SAMPLE_COUNT 4
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_4_GRAY.frag
+#define SAMPLE_COUNT 4
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_1_AO.frag
+#define SAMPLE_COUNT 1
+#define USE_AMBIENT_OCCLUSION 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_1_AO_GRAY.frag
+#define SAMPLE_COUNT 1
+#define USE_AMBIENT_OCCLUSION 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_2_AO.frag
+#define SAMPLE_COUNT 2
+#define USE_AMBIENT_OCCLUSION 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_2_AO_GRAY.frag
+#define SAMPLE_COUNT 2
+#define USE_AMBIENT_OCCLUSION 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_COUNT_4_AO.frag
+#define SAMPLE_COUNT 4
+#define USE_AMBIENT_OCCLUSION 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_SAMPLE_COUNT_4_AO_GRAY.frag
+#define SAMPLE_COUNT 4
+#define USE_AMBIENT_OCCLUSION 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_VRS.frag
+#define SAMPLE_COUNT 4
+#define USE_VRS 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_VRS_GRAY.frag
+#define SAMPLE_COUNT 4
+#define USE_VRS 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_VRS_AO.frag
+#define SAMPLE_COUNT 4
+#define USE_AMBIENT_OCCLUSION 1
+#define USE_VRS 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+#frag visibilityBuffer_shade_VRS_AO_GRAY.frag
+#define SAMPLE_COUNT 4
+#define USE_AMBIENT_OCCLUSION 1
+#define USE_VRS 1
+#define ENABLED_GODRAY
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag resolve_SAMPLE_COUNT_1.frag
+#define SAMPLE_COUNT 1
+#include "Resolve.frag.fsl"
+#end
+#frag resolve_SAMPLE_COUNT_2.frag
+#define SAMPLE_COUNT 2
+#include "Resolve.frag.fsl"
+#end
+#frag resolve_SAMPLE_COUNT_4.frag
+#define SAMPLE_COUNT 4
+#include "Resolve.frag.fsl"
+#end
+
+#frag fillStencil.frag
+#include "FillStencil.frag.fsl"
+#end
+
+#vert fillStencil.vert
+#include "FillStencil.vert.fsl"
+#end
+
+#comp resolveVRS.comp
+#define SAMPLE_COUNT 4
+#include "ResolveVRS.comp.fsl"
+#end

@@ -1,0 +1,123 @@
+/*
+ * Copyright (c) 2017-2025 The Forge Interactive Inc.
+ *
+ * This file is part of The-Forge
+ * (see https://github.com/ConfettiFX/The-Forge).
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+*/
+
+#ifndef hair_h
+#define hair_h
+
+#ifndef __fsl
+//#define STATIC static
+//#define STRUCT(NAME) struct NAME
+//#define DATA(TYPE, NAME, SEM) TYPE NAME
+//#define CBUFFER(NAME, REG, FREQ, BINDING) struct NAME
+//#define float4x4 mat4
+//#define float4 vec4
+//#define uint uint32_t
+#endif
+
+#define SHORT_CUT_MIN_ALPHA 0.02f
+#define PI 3.1415926
+#define e 2.71828183
+#define EPSILON 1e-7f
+
+#ifndef MAX_NUM_DIRECTIONAL_LIGHTS
+#define MAX_NUM_DIRECTIONAL_LIGHTS 1
+#endif
+#ifndef MAX_NUM_POINT_LIGHTS
+#define MAX_NUM_POINT_LIGHTS 1
+#endif
+
+
+#include "Resources.comp.h.fsl"
+#include "Resources.h.fsl"
+#include "Hair.srt.h"
+
+// Common functions
+float3 ScreenPosToNDC(float3 screenPos, float4 viewport)
+{
+	float2 xy = screenPos.xy;
+
+	// add viewport offset.
+	xy += viewport.xy;
+
+	// scale by viewport to put in 0 to 1
+	xy /= viewport.zw;
+
+	// shift and scale to put in -1 to 1. y is also being flipped.
+	xy.x = (2 * xy.x) - 1;
+	xy.y = 1 - (2 * xy.y);
+
+	return float3(xy, screenPos.z);
+}
+
+float ComputeCoverage(float2 p0, float2 p1, float2 pixelLoc, float2 winSize)
+{
+	// p0, p1, pixelLoc are in d3d clip space (-1 to 1)x(-1 to 1)
+
+	// Scale positions so 1.f = half pixel width
+	p0 *= winSize;
+	p1 *= winSize;
+	pixelLoc *= winSize;
+
+	float p0dist = length(p0 - pixelLoc);
+	float p1dist = length(p1 - pixelLoc);
+	float hairWidth = length(p0 - p1);
+
+	// will be 1.f if pixel outside hair, 0.f if pixel inside hair
+	float outside = float(any(float2(step(hairWidth, p0dist), step(hairWidth, p1dist))));
+
+	// if outside, set sign to -1, else set sign to 1
+	float sign = outside > 0.f ? -1.f : 1.f;
+
+	// signed distance (positive if inside hair, negative if outside hair)
+	float relDist = sign * saturate(min(p0dist, p1dist));
+
+	// returns coverage based on the relative distance
+	// 0, if completely outside hair edge
+	// 1, if completely inside hair edge
+	return (relDist + 1.f) * 0.5f;
+}
+
+// Common shader I/O
+STRUCT(VSOutput)
+{
+	DATA(float4, Position, SV_Position);
+	DATA(float4, Tangent, TANGENT);
+	DATA(float4, P0P1, POINT);
+	DATA(float4, Color, COLOR);
+	DATA(float2, W0W1, POINT1);
+#if FT_MULTIVIEW
+    DATA(FLAT(uint), ViewID, TEXCOORD3);
+#endif
+};
+
+STRUCT(VSOutputFullscreen)
+{
+	DATA(float4, Position, SV_Position);
+	DATA(float2, UV, TEXCOORD);
+#if FT_MULTIVIEW
+    DATA(FLAT(uint), ViewID, TEXCOORD3);
+#endif
+};
+
+#endif /* hair_h */

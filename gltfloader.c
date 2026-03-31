@@ -7,6 +7,35 @@
 
 #include "external/cglm/include/cglm/cglm.h"
 #include "external/cgltf/cgltf.h"
+#include "fs.h"
+
+static cgltf_result cgltf_fs_read(const cgltf_memory_options* memory_options,
+                                  const cgltf_file_options* file_options,
+                                  const char* path,
+                                  cgltf_size* size,
+                                  void** data)
+{
+    (void)memory_options;
+    (void)file_options;
+
+    size_t read_size = 0;
+    if(!fs_read_all(path, data, &read_size))
+        return cgltf_result_io_error;
+
+    *size = (cgltf_size)read_size;
+    return cgltf_result_success;
+}
+
+static void cgltf_fs_release(const cgltf_memory_options* memory_options,
+                             const cgltf_file_options* file_options,
+                             void* data,
+                             cgltf_size size)
+{
+    (void)memory_options;
+    (void)file_options;
+    (void)size;
+    fs_free(data);
+}
 
 static GLTFInterpolation to_interp(cgltf_interpolation_type interpolation)
 {
@@ -422,6 +451,9 @@ bool loadGltf(const char* path, GLTFFlags flags, GLTFContainer** outGltf)
 
     cgltf_options options = {0};
     cgltf_data* data      = NULL;
+
+    options.file.read    = cgltf_fs_read;
+    options.file.release = cgltf_fs_release;
 
     if(cgltf_parse_file(&options, path, &data) != cgltf_result_success)
         return false;

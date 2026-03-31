@@ -1,0 +1,188 @@
+#include "../../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+#comp BRDFIntegration_SAMPLES_0.comp
+#define IMPORTANCE_SAMPLE_COUNT 0
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_32.comp
+#define IMPORTANCE_SAMPLE_COUNT 32
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_64.comp
+#define IMPORTANCE_SAMPLE_COUNT 64
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_128.comp
+#define IMPORTANCE_SAMPLE_COUNT 128
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_256.comp
+#define IMPORTANCE_SAMPLE_COUNT 256
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_1024.comp
+#define IMPORTANCE_SAMPLE_COUNT 1024
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+
+#comp computeIrradianceMap_SAMPLE_DELTA_05.comp
+#define SAMPLE_DELTA 0.5f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_025.comp
+#define SAMPLE_DELTA 0.25f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_0125.comp
+#define SAMPLE_DELTA 0.125f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_005.comp
+#define SAMPLE_DELTA 0.05f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_0025.comp
+#define SAMPLE_DELTA 0.025f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+
+#comp computeSpecularMap_SAMPLES_0.comp
+#define IMPORTANCE_SAMPLE_COUNT 0
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_32.comp
+#define IMPORTANCE_SAMPLE_COUNT 32
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_64.comp
+#define IMPORTANCE_SAMPLE_COUNT 64
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_128.comp
+#define IMPORTANCE_SAMPLE_COUNT 128
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_256.comp
+#define IMPORTANCE_SAMPLE_COUNT 256
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_1024.comp
+#define IMPORTANCE_SAMPLE_COUNT 1024
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+
+#comp copyDepth.comp
+#include "CopyDepth.comp.fsl"
+#end
+
+// force AB usage here, because the total number of rw textures in
+// this shader exceeds the metal limit (8) for direct bindings
+#comp FT_ICB DepthDownsample.comp
+#include "DepthDownsample.comp.fsl"
+#end
+
+
+#comp clearVisibilityBuffers.comp
+#include "TriangleFilteringClear.comp.fsl"
+#end
+
+#comp triangleFiltering.comp
+#include "TriangleFiltering.comp.fsl"
+#end
+
+#frag FT_MULTIVIEW FT_PRIM_ID visibilityBufferPass.frag
+#include "VisibilityBufferPass.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW FT_PRIM_ID visibilityBufferPass.vert
+#include "VisibilityBufferPass.vert.fsl"
+#end
+
+#vert FT_MULTIVIEW FT_PRIM_ID visibilityBufferPassAlpha.vert
+#include "VisibilityBufferPassAlpha.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW FT_PRIM_ID visibilityBufferPassAlpha.frag
+#include "VisibilityBufferPassAlpha.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW visibilityBufferShade.vert
+#include "VisibilityBufferShade.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW visibilityBufferShade.frag
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#comp FT_MULTIVIEW generateMips.comp
+#include "GenerateMips.comp.fsl"
+#end
+
+#frag FT_MULTIVIEW PPR_Holepatching.frag
+#include "PPR_HolePatching.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW PPR_Holepatching.vert
+#include "PPR_HolePatching.vert.fsl"
+#end
+
+#comp FT_MULTIVIEW PPR_Projection.comp
+#include "PPR_Projection.comp.fsl"
+#end
+
+#frag FT_MULTIVIEW PPR_Reflection.frag
+#include "PPR_Reflection.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW PPR_Reflection.vert
+#include "PPR_Reflection.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW skybox.frag
+#include "Skybox.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW skybox.vert
+#include "Skybox.vert.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ClassifyTiles.comp
+#include "SSSR_ClassifyTiles.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_Intersect.comp
+#include "SSSR_Intersect.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_PrepareIndirectArgs.comp
+#include "SSSR_PrepareIndirectArgs.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ResolveEaw.comp
+#include "SSSR_ResolveEaw.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ResolveEawStride_2.comp
+#define FFX_SSSR_EAW_STRIDE 2
+#include "SSSR_ResolveEawStride.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ResolveEawStride_4.comp
+#define FFX_SSSR_EAW_STRIDE 4
+#include "SSSR_ResolveEawStride.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ResolveSpatial.comp
+#include "SSSR_ResolveSpatial.comp.fsl"
+#end
+
+#comp FT_MULTIVIEW SSSR_ResolveTemporal.comp
+#include "SSSR_ResolveTemporal.comp.fsl"
+#end
+

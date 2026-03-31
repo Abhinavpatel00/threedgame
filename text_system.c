@@ -3,9 +3,10 @@
 #include "external/stb/stb_truetype.h"
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "fs.h"
 
 typedef struct SlugCurve
 {
@@ -101,37 +102,15 @@ static inline float bitcast_u32_to_f32(uint32_t value)
 
 static uint8_t* read_file_bytes_local(const char* path, size_t* out_size)
 {
-    FILE* f = fopen(path, "rb");
-    if(!f)
-        return NULL;
+    void*  data = NULL;
+    size_t size = 0;
 
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if(len <= 0)
-    {
-        fclose(f);
+    if(!fs_read_all(path, &data, &size))
         return NULL;
-    }
-
-    uint8_t* data = malloc((size_t)len);
-    if(!data)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    size_t read_n = fread(data, 1, (size_t)len, f);
-    fclose(f);
-    if(read_n != (size_t)len)
-    {
-        free(data);
-        return NULL;
-    }
 
     if(out_size)
-        *out_size = (size_t)len;
-    return data;
+        *out_size = size;
+    return (uint8_t*)data;
 }
 
 static SlugCurve line_to_quadratic(float x0, float y0, float x1, float y1)

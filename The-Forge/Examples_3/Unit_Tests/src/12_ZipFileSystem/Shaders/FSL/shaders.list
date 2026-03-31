@@ -1,0 +1,40 @@
+#include "../../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+#frag FT_MULTIVIEW basic.frag
+#include "Basic.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW basic.vert
+#include "Basic.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW skybox.frag
+#include "Skybox.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW skybox.vert
+#include "Skybox.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW zipTexture.frag
+#include "ZipTexture.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW zipTexture.vert
+#include "ZipTexture.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW occlusion.frag
+#include "Occlusion.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW occlusion.vert
+#include "Occlusion.vert.fsl"
+#end
+

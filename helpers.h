@@ -1,4 +1,24 @@
+#ifndef HELPERS_H
+#define HELPERS_H
+
 #include "vk_default.h"
+
+#ifndef CGLM_ALL_UNALIGNED
+#define CGLM_ALL_UNALIGNED
+#endif
+#include "external/cglm/include/cglm/cglm.h"
+#include "external/cglm/include/cglm/types.h"
+
+float rand_float01(void);
+float rand_float_range(float min, float max);
+int rand_int_range(int min, int max);
+void rand_seed(uint64_t seed);
+
+// Build a transform matrix from position + Euler XYZ rotation (radians).
+void compose_transform_pos_rot(const vec3 position, const vec3 rotation, mat4 out_transform);
+
+// Segment vs axis-aligned box intersection (box is center + half extents).
+bool segment_aabb_intersect(const vec3 p0, const vec3 p1, const vec3 b_center, const vec3 b_half);
 
 /*
 
@@ -235,3 +255,5 @@ static inline void vk_end_one_time_cmd(VkDevice device, VkQueue queue, VkCommand
 
     vkFreeCommandBuffers(device, pool, 1, &cmd);
 }
+
+#endif

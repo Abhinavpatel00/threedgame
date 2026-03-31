@@ -1,0 +1,52 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source\Shared">
+      <UniqueIdentifier>{bc0b7dc4-16b7-4178-b989-4091a933965c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source">
+      <UniqueIdentifier>{21423904-f33a-4836-9278-4b16fcfb9538}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers\Shared">
+      <UniqueIdentifier>{6e3ca9c4-5fe9-4916-822f-38111694e296}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{a0fb020e-f9b0-481e-9c72-01fab5010789}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FSLShaders">
+      <UniqueIdentifier>{013c2606-8b08-4d32-9e6b-03808e9ee7f9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Misc">
+      <UniqueIdentifier>{515f5032-828c-4c3b-8063-e98978e73402}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{cb3c732a-4dec-42f9-a248-bd72efc6558d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\..\Common_3\Game\ThirdParty\OpenSource\flecs\flecs.c">
+      <Filter>Source\Shared</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\19_CodeHotReload\19_CodeHotReload_Main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\..\..\Common_3\Game\ThirdParty\OpenSource\flecs\flecs.h">
+      <Filter>Headers\Shared</Filter>
+    </ClInclude>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Basic.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Basic.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Shaders.list">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <None Include="..\..\src\19_CodeHotReload\GPUCfg\gpu.cfg">
+      <Filter>Misc</Filter>
+    </None>
+    <None Include="..\..\src\19_CodeHotReload\Scripts\Test_HotReload.lua">
+      <Filter>Scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>

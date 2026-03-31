@@ -1,0 +1,347 @@
+/*
+ * Copyright (c) 2017-2025 The Forge Interactive Inc.
+ * 
+ * This file is part of The-Forge
+ * (see https://github.com/ConfettiFX/The-Forge).
+ * 
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * 
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+*/
+
+#include "RenderSceneBRDFResources.h.fsl"
+#include "../../../../../../Common_3/Graphics/ShaderUtilities.h.fsl"
+
+#define PI      3.14159265359
+#define PI_DIV2 1.57079632679
+
+STRUCT(VSOutput)
+{
+	DATA(float4, Position, SV_Position);
+	DATA(float3, pos, POSITION);
+	DATA(float3, normal, NORMAL);
+	DATA(float2, uv, TEXCOORD0);
+};
+
+//
+// UTILITY FUNCTIONS
+//
+INLINE bool HasDiffuseTexture(int _textureConfig)   { return (_textureConfig & (1 << 0)) != 0; }
+INLINE bool HasNormalTexture(int _textureConfig)    { return (_textureConfig & (1 << 1)) != 0; }
+INLINE bool HasMetallicTexture(int _textureConfig)  { return (_textureConfig & (1 << 2)) != 0; }
+INLINE bool HasRoughnessTexture(int _textureConfig) { return (_textureConfig & (1 << 3)) != 0; }
+INLINE bool HasAOTexture(int _textureConfig)        { return (_textureConfig & (1 << 4)) != 0; }
+INLINE bool HasVMFTexture(int _textureConfig)        { return (_textureConfig & (1 << 5)) != 0; }
+
+INLINE bool IsOrenNayarDiffuse(int _textureConfig)  { return (_textureConfig & (1 << 6)) != 0; }
+
+float3 ReconstructNormal(float4 sampleNormal, float intensity)
+{
+	float3 tangentNormal;
+	tangentNormal.xy = (sampleNormal.ga * 2 - 1) * intensity;
+	tangentNormal.z = sqrt(1 - saturate(dot(tangentNormal.xy, tangentNormal.xy)));
+	return tangentNormal;
+}
+
+INLINE float3 UnpackNormals(float2 uv, float3 viewDirection, Tex2D(float4) _normalMap, SamplerState samplerState, float3 normal, float intensity)
+{
+	float3 tangentNormal = ReconstructNormal(SampleTex2D(_normalMap, samplerState, uv), intensity);
+
+	float3 dPdx = ddx(viewDirection);
+	float3 dPdy = ddy(viewDirection);
+	float2 dUVdx = ddx(uv);
+	float2 dUVdy = ddy(uv);
+
+	float3 N = normalize(normal);
+	float3 crossPdyN = cross(dPdy, N);
+	float3 crossNPdx = cross(N, dPdx); 
+
+	float3 T = crossPdyN * dUVdx.x + crossNPdx * dUVdy.x;
+	float3 B = crossPdyN * dUVdx.y + crossNPdx * dUVdy.y;
+
+	float invScale = rsqrt(max(dot(T, T), dot(B, B)));
+
+	float3x3 TBN = make_f3x3_rows(T * invScale, B * invScale, N);
+	return normalize(mul(tangentNormal, TBN));
+}
+
+//
+// LIGHTING FUNCTIONS
+//
+float GeometrySchlickGGX(float NdotV, float roughness)
+{
+	float r = (roughness + 1.0f);
+	float k = (r*r) / 8.0f;
+
+	float nom = NdotV;
+	float denom = NdotV * (1.0 - k) + k;
+
+	return nom / denom;
+}
+
+float GeometrySmith(float NdotV, float NdotL, float roughness)
+{
+	float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+	float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+
+	return ggx1 * ggx2;
+}
+
+float3 OrenNayarDiffuse(float3 L, float3 V, float3 N, float NdotV, float NdotL, float roughness, float3 albedo, float3 kD)
+{
+	// src: https://www.gamasutra.com/view/feature/131269/implementing_modular_hlsl_with_.php?page=3
+
+	// gamma: the azimuth (circular angle) between L and V
+	//
+	const float gamma = max(0.0f, dot( normalize(V - N * NdotV), normalize(L - N * NdotL) ));
+
+	// alpha and beta represent the polar angles in spherical coord system
+	//
+	// alpha = min(theta_L, theta_V)
+	// beta  = max(theta_L, theta_V)
+	//
+	// where theta_L is the angle between N and L
+	//   and theta_V is the angle between N and V
+	//
+	const float alpha = max( acos(NdotV), acos(NdotL) );
+	const float beta  = min( acos(NdotV), acos(NdotL) );
+
+	const float sigma2 = roughness * roughness;
+
+	// Oren-Nayar constants
+	const float A = 1.0f - 0.5f * sigma2 / (sigma2 + 0.33f);
+	float B = 0.45f * sigma2 / (sigma2 + 0.09f);
+	if (gamma >= 0)
+		B *= sin(alpha) * clamp(tan(beta), -PI_DIV2, PI_DIV2);
+	else
+		B = 0.0f;
+
+	return (A + B) * albedo * kD / PI;
+}
+
+float3 BRDF(float NoV, float NoL, float3 N, float3 V, float3 L, float3 albedo, float3 F0, float roughness, float metalness, int isOrenNayar)
+{	
+	const float3 H = normalize(V + L);
+	float NoH = saturate(dot(N, H));
+
+	// Calculate surface reflection..
+	float3 F = F_Schlick(F0, NoH);
+
+	float3 kS = F;
+	float3 kD = (float3(1.0f, 1.0f, 1.0f) - kS) * (1.0f - metalness);
+
+	if (isOrenNayar != 0)
+	{
+		return OrenNayarDiffuse(L, V, N, NoV, NoL, roughness, albedo, kD);
+	}
+
+	float a = roughness*roughness;
+	float a2 = a*a;
+
+	// Calculate normal distribution.. Approx. microfacets..
+	float NDF = D_GGX(a2, NoH);
+	// Calculate Geometry func.. Self-shadowing for microfacets..
+	float G = GeometrySmith(NoV, NoL, roughness);
+
+	// Id & Is: diffuse & specular illumination
+	float3 Is = NDF * G * F / (4.0f * NoV * NoL + 0.001f);
+	// Lambert diffuse..
+	float3 Id = kD * albedo / PI;
+
+	return Id + Is;
+}
+
+float3 EnvironmentBRDF(float NoV, float3 N, float3 V, float3 albedo, float3 F0, float roughness, float metalness)
+{
+	const float3 R = reflect(-V, N);
+
+	// Calculate surface reflection..
+	float3 F = FresnelSchlickRoughness(NoV, F0, roughness);
+
+	float3 kS = F;
+	float3 kD = (float3(1.0f, 1.0f, 1.0f) - kS) * (1.0f - metalness);
+
+	// Sample Prefiltered specular map and Indirect light map..
+	float3 irradiance = SampleTexCube(gIrradianceMap, gEnvironmentSampler, N).rgb;
+	float3 specular = SampleLvlTexCube(gSpecularMap, gEnvironmentSampler, R, roughness * 4).rgb;
+
+	float2 maxNVRough = float2(NoV, roughness);
+
+	// Specular Integral map.
+	float2 brdf = SampleTex2D(gBRDFIntegrationMap, gBRDFIntegrationSampler, maxNVRough).rg;
+
+	// Id & Is: diffuse & specular illumination
+	float3 Is = specular * (F * brdf.x + brdf.y);
+	float3 Id = kD * irradiance * albedo;
+
+	return (Id + Is);
+}
+
+float ShadowTest(float4 Pl, float2 shadowMapDimensions)
+{
+	// homogenous position after perspective divide
+	const float3 projLSpaceCoords = Pl.xyz / Pl.w;
+
+	// light frustum check
+	if (projLSpaceCoords.x < -1.0f || projLSpaceCoords.x > 1.0f ||
+		projLSpaceCoords.y < -1.0f || projLSpaceCoords.y > 1.0f ||
+		projLSpaceCoords.z <  0.0f || projLSpaceCoords.z > 1.0f
+		)
+	{
+		return 1.0f;
+	}
+
+	const float2 texelSize = 1.0f / (shadowMapDimensions);
+	
+	// clip space [-1, 1] --> texture space [0, 1]
+	const float2 shadowTexCoords = float2(0.5f, 0.5f) + projLSpaceCoords.xy * float2(0.5f, -0.5f);	// invert Y
+	
+	//const float BIAS = pcfTestLightData.depthBias * tan(acos(pcfTestLightData.NdotL));
+	const float BIAS = 0.00001f;
+	const float pxDepthInLSpace = projLSpaceCoords.z;
+
+	float shadow = 0.0f;
+	const int rowHalfSize = 2;
+
+	// PCF
+	for (int x = -rowHalfSize; x <= rowHalfSize; ++x)
+	{
+		for (int y = -rowHalfSize; y <= rowHalfSize; ++y)
+		{
+			float2 texelOffset = float2(x, y) * texelSize;
+			float closestDepthInLSpace = SampleLvlTex2D(gShadowMap, gSamplerPointBorder, shadowTexCoords + texelOffset, 0).x;
+
+			// depth check
+			shadow += (pxDepthInLSpace + BIAS < closestDepthInLSpace) ? 1.0f : 0.0f;
+		}
+	}
+
+	shadow /= (rowHalfSize * 2 + 1) * (rowHalfSize * 2 + 1);
+	return 1.0 - shadow;
+}
+ROOT_SIGNATURE(DefaultRootSignature)
+float4 PS_MAIN(VSOutput In)
+{
+	INIT_MAIN;
+	float4 Out;
+	// Read material surface properties
+	//
+	const float3 P = In.pos.xyz;
+	const float3 V = normalize(gCamera.camPos.xyz - P);
+	const float2 uv = In.uv * gObject.tiling;
+
+	float3 _albedo = HasDiffuseTexture(gObject.textureConfig)
+		? SampleTex2D(gAlbedoMap, gMaterialSampler, uv).rgb
+		: gObject.albedoAndRoughness.rgb;
+
+	float _roughness = HasRoughnessTexture(gObject.textureConfig)
+		? SampleTex2D(gRoughnessMap, gMaterialSampler, uv).r
+		: gObject.albedoAndRoughness.a;
+	if (_roughness < 0.04) _roughness = 0.04;
+
+	const float _metalness = HasMetallicTexture(gObject.textureConfig)
+		? SampleTex2D(gMetallicMap, gMaterialSampler, uv).r
+		: gObject.baseMetalness;
+
+	const float _ao = HasAOTexture(gObject.textureConfig)
+		? SampleTex2D(gAOMap, gMaterialSampler, uv).r
+		: 1.0f;
+
+	float3 normalvMF = UnpackNormals(uv, -V, gVMFMap, gMaterialSampler, In.normal, gCamera.fNormalMapIntensity);
+	float3 normal = UnpackNormals(uv, -V, gNormalMap, gMaterialSampler, In.normal, gCamera.fNormalMapIntensity);
+	float3 N = HasNormalTexture(gObject.textureConfig)
+		?  (HasVMFTexture(gObject.textureConfig) ? normalvMF : normal)
+		: normalize(In.normal);
+	
+	const int isOrenNayar = IsOrenNayarDiffuse(gObject.textureConfig) ? 1 : 0;
+
+	float3 Lo = float3(0.0f, 0.0f, 0.0f);	// outgoing radiance
+
+	// F0 represents the base reflectivity (calculated using IOR: index of refraction)
+	float3 F0 = float3(0.04f, 0.04f, 0.04f);
+	F0 = lerp(F0, _albedo, _metalness);
+
+	float NoV = saturate(dot(N, V));
+
+	// Direct Lights
+	uint i;
+	for (i = 0; i < gPointLights.NumPointLights; ++i)
+	{
+		float3 L = P - gPointLights.PointLights[i].positionAndRadius.xyz;
+		float3 lVec = L * (1.0 / gPointLights.PointLights[i].positionAndRadius.w);
+		const float  attenuation = saturate(1.0f - dot(lVec, lVec));
+
+		L = normalize(L);
+		float NoL = max(dot(N, L), 0.0f);
+
+		const float3 color = gPointLights.PointLights[i].colorAndIntensity.rgb;
+		const float  intensity = gPointLights.PointLights[i].colorAndIntensity.a;
+		const float3 radiance = color * intensity * attenuation;
+
+		Lo += BRDF(NoV, NoL, N, V, L, _albedo, F0, _roughness, _metalness, isOrenNayar) * radiance * NoL;
+	}
+
+	for (i = 0; i < gDirectionalLights.NumDirectionalLights; ++i)
+	{
+		const float3 L = gDirectionalLights.DirectionalLights[i].directionAndShadowMap.xyz;
+		const float4 P_lightSpace = mul(gDirectionalLights.DirectionalLights[i].viewProj, float4(P, 1.0f) );
+		const float  NoL = max(dot(N, L), 0.0f);
+		const float3 color = gDirectionalLights.DirectionalLights[i].colorAndIntensity.rgb;
+		const float  intensity = gDirectionalLights.DirectionalLights[i].colorAndIntensity.a;
+		const float3 radiance = color * intensity;
+		const float  shadowing = ShadowTest(P_lightSpace, f2(gDirectionalLights.DirectionalLights[i].shadowMapDimensions));
+
+		Lo += BRDF(NoV, NoL, N, V, L, _albedo, F0, _roughness, _metalness, isOrenNayar) * radiance * NoL * shadowing;
+	}
+
+	// Environment Lighting
+	if (gCamera.bUseEnvironmentLight != 0)
+	{
+		float aoWithIntensity = _ao  * gCamera.fAOIntensity + (1.0f - gCamera.fAOIntensity);
+		Lo += EnvironmentBRDF(NoV, N, V, _albedo, F0, _roughness, _metalness) * float3(aoWithIntensity, aoWithIntensity, aoWithIntensity) * gCamera.fEnvironmentLightIntensity;
+	}
+	else
+	{
+		if(HasAOTexture(gObject.textureConfig))
+			Lo += _albedo * (_ao  * gCamera.fAOIntensity + (1.0f - gCamera.fAOIntensity)) * gCamera.fAmbientLightIntensity;
+	}
+	
+	float3 color = Lo;
+	// Tone mapping
+	color = color / (color + float3(1.0f, 1.0f, 1.0f));
+	
+	int debugRenderMode = gCamera.renderMode;
+	
+	// This define is set in the fmat file
+#ifdef MATERIAL_RENDER_MODE
+	debugRenderMode = MATERIAL_RENDER_MODE;
+#endif
+
+	// final color
+	switch (debugRenderMode)
+	{
+	default:
+	case 0: break;
+	case 1: color = _albedo; break;
+	case 2: color = N; break;
+	case 3: color = f3(_roughness); break;
+	case 4: color = f3(_metalness); break;
+	case 5: color = (f3(_ao) * gCamera.fAOIntensity + (1.0f - gCamera.fAOIntensity)); break;
+	}
+
+	Out = float4(color.r, color.g, color.b, 1.0f);
+	RETURN(Out);
+}

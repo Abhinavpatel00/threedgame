@@ -1,0 +1,52 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{a2ece223-6482-47e5-909a-a96ecf0061b8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{fd986066-84b5-4a5f-8579-71e6c5d1066f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FSLShaders">
+      <UniqueIdentifier>{a1a38c60-ed57-4a41-b793-2f7fa569654f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Misc">
+      <UniqueIdentifier>{be02f779-e187-487e-88fb-cdeb15d2bdeb}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\28_Skinning\28_Skinning.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\src\28_Skinning\Shaders\FSL\Global.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\28_Skinning\Shaders\Shared.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Plane.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Plane.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Resources.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Shaders.list">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Skinning.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Skinning.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\28_Skinning\Shaders\FSL\Skinning.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <None Include="..\..\src\28_Skinning\GPUCfg\gpu.cfg">
+      <Filter>Misc</Filter>
+    </None>
+  </ItemGroup>
+</Project>

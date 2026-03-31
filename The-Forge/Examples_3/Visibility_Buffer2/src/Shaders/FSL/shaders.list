@@ -1,0 +1,87 @@
+#include "../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+
+#pragma FT_ATOMICS_64
+
+#comp triangle_filtering.comp
+#include "TriangleFiltering.comp.fsl"
+#end
+
+#comp triangle_filtering_LG.comp
+#define BIN_RASTER_LARGE_GROUPS
+#include "TriangleFiltering.comp.fsl"
+#end
+
+#comp clear_buffers.comp
+#include "ClearBuffers.comp.fsl"
+#end
+
+#comp clear_light_clusters.comp
+#include "LightClustersClear.comp.fsl"
+#end
+
+#comp cluster_lights.comp
+#include "LightClusters.comp.fsl"
+#end
+
+#vert display.vert
+#include "Display.vert.fsl"
+#end
+
+#frag godray.frag
+#define SAMPLE_COUNT 1
+#include "Godray.frag.fsl"
+#end
+
+#comp godray_blur.comp
+#include "GodrayBlur.comp.fsl"
+#end
+
+#frag CurveConversion.frag
+#include "CurveConversion.frag.fsl"
+#end
+
+#frag display.frag
+#include "Display.frag.fsl"
+#end
+
+#vert skybox.vert
+#include "Skybox.vert.fsl"
+#end
+
+#frag skybox.frag
+#include "Skybox.frag.fsl"
+#end
+
+#vert visibilityBuffer_shade.vert
+#include "VisibilityBufferShade.vert.fsl"
+#end
+
+// We should have a better way of generating these
+#frag visibilityBuffer_shade_SAMPLE_1.frag
+#define SAMPLE_COUNT 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#frag visibilityBuffer_shade_SAMPLE_1_AO.frag
+#define SAMPLE_COUNT 1
+#include "VisibilityBufferShade.frag.fsl"
+#end
+
+#comp FT_METAL_NO_FAST_MATH bin_rasterizer.comp
+#include "BinRasterizer.comp.fsl"
+#end
+
+#frag visibilityBuffer_blitDepth.frag
+#include "VisibilityBufferBlitDepth.frag.fsl"
+#end
+
+#comp clear_render_target.comp
+#include "ClearRenderTarget.comp.fsl"
+#end

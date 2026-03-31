@@ -1,0 +1,213 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleBoids.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleDefs.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticlePacking.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleRandom.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleSets.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleShared.h.fsl" />
+    <FSLShader Include="..\..\..\Common_3\Renderer\ParticleSystem\Shaders\ParticleUtils.h.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\FullScreenQuad.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\OitCompose.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\Shaders.list" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\TriangleFilteringClear.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\LightClustersClear.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferShadeClearTexture.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\LightClusters.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\LightClustersDepthBounds.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\LightClustersDepthClusters.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\DownSampleDepth.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\LightCullResources.h.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\Particle.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\Particle.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ParticleSimulate.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShaderDefs.h.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowFiltering.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowPass.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowPass.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowPassAlpha.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowPassAlpha.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\TriangleFiltering.comp.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferResources.h.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferResourcesUtil.h.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferPass.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferPass.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferPassAlpha.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferPassAlpha.vert.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferShade.frag.fsl" />
+    <FSLShader Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferShade.vert.fsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Visibility_Buffer\src\SanMiguel.cpp" />
+    <ClCompile Include="..\src\39_ParticleSystem\39_ParticleSystem.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Visibility_Buffer\src\SanMiguel.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\LightClusters.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\Particle.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\PersistentSet.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\PerFrameSet.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowFiltering.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\ShadowPass.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\Global.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\TriangleFiltering.srt.h" />
+    <ClInclude Include="..\src\39_ParticleSystem\Shaders\FSL\VisibilityBufferShade.srt.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\src\39_ParticleSystem\GPUCfg\gpu.cfg" />
+    <None Include="..\src\39_ParticleSystem\Scripts\Test_AllSets.lua" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{C3E55E0E-9251-4FF0-8650-1A374CFDF657}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="..\..\..\Examples_3\Build_Props\VS\TF_Shared.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+    <IntDir>$(SolutionDir)\$(Platform)\$(Configuration)\Intermediate\$(ProjectName)\</IntDir>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)\$(Platform)\$(Configuration);$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\</OutDir>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <IntDir>$(SolutionDir)\$(Platform)\$(Configuration)\Intermediate\$(ProjectName)\</IntDir>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)\$(Platform)\$(Configuration);$(LibraryPath);</LibraryPath>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\$(ProjectName)\</OutDir>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
+      <AdditionalDependencies>Xinput9_1_0.lib;ws2_32.lib;ozz_base.lib;ozz_animation.lib;Renderer.lib;OS.lib;%(AdditionalDependencies);</AdditionalDependencies>
+    </Link>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)dpi-aware.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+    <CustomBuildStep>
+      <Command>%(Command)</Command>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
+    </CustomBuildStep>
+    <PostBuildEvent>
+      <Command>
+        %(Command)
+        xcopy /Y /D "$(TheForgeArtDir)cameraPath.txt" "$(OutDir)"
+      </Command>
+    </PostBuildEvent>
+    <FSLShader>
+      <OutDir>$(OutDir)Shaders</OutDir>
+      <BinaryOutDir>$(OutDir)CompiledShaders</BinaryOutDir>
+      <Compile>true</Compile>
+      <Language>DIRECT3D12</Language>
+    </FSLShader>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
+      <AdditionalDependencies>Xinput9_1_0.lib;ws2_32.lib;ozz_base.lib;ozz_animation.lib;Renderer.lib;OS.lib;%(AdditionalDependencies);</AdditionalDependencies>
+    </Link>
+    <FxCompile>
+      <EntryPointName>
+      </EntryPointName>
+    </FxCompile>
+    <Manifest>
+      <AdditionalManifestFiles>$(SolutionDir)dpi-aware.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+    <CustomBuildStep>
+      <Command>%(Command)</Command>
+      <Message>
+      </Message>
+      <Outputs>
+      </Outputs>
+    </CustomBuildStep>
+    <PostBuildEvent>
+      <Command>
+        %(Command)
+        xcopy /Y /D "$(TheForgeArtDir)cameraPath.txt" "$(OutDir)"
+      </Command>
+    </PostBuildEvent>
+    <FSLShader>
+      <OutDir>$(OutDir)Shaders</OutDir>
+      <BinaryOutDir>$(OutDir)CompiledShaders</BinaryOutDir>
+      <Compile>true</Compile>
+      <Language>DIRECT3D12</Language>
+    </FSLShader>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\..\..\Common_3\Tools\ForgeShadingLanguage\VS\fsl.targets" />
+  </ImportGroup>
+  <ProjectExtensions>
+    <VisualStudio>
+      <UserProperties />
+    </VisualStudio>
+  </ProjectExtensions>
+</Project>

@@ -1,0 +1,25 @@
+/*
+ * Copyright (c) 2017-2025 The Forge Interactive Inc.
+ */
+
+#ifndef SKINNING_H
+#define SKINNING_H
+
+#include "../Shared.h"
+
+STRUCT(UniformBlock)
+{
+#if FT_MULTIVIEW
+    DATA(float4x4, vpMatrix[VR_MULTIVIEW_COUNT], None);
+#else
+    DATA(float4x4, vpMatrix, None);
+#endif
+
+    DATA(float4x4, modelMatrix, None);
+};
+
+
+
+#include "Global.srt.h"
+
+#endif

@@ -126,10 +126,11 @@ void gfx_pipelines()
         }
         {
             GraphicsPipelineConfig cfg = pipeline_config_default();
+            VkFormat               ground_color_formats[2] = {renderer.hdr_color[1].format, renderer.bloom_chain[1].format};
             cfg.vert_path              = "compiledshaders/ground.vert.spv";
             cfg.frag_path              = "compiledshaders/ground.frag.spv";
-            cfg.color_attachment_count = 1;
-            cfg.color_formats          = &renderer.hdr_color[1].format;
+            cfg.color_attachment_count = 2;
+            cfg.color_formats          = ground_color_formats;
             cfg.depth_format           = renderer.depth[1].format;
             cfg.depth_test_enable      = true;
             cfg.depth_write_enable     = true;

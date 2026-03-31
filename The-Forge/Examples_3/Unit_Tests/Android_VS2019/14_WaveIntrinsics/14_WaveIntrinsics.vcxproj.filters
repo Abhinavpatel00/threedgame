@@ -1,0 +1,79 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{5dc92234-8b3d-4855-a2f5-dbfc5cc3f410}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{9c3a208d-eed8-4896-b424-c698ed8c1ef0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FSLShaders">
+      <UniqueIdentifier>{4a4994da-9007-4995-9f15-2bce0549e575}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Misc">
+      <UniqueIdentifier>{218dacdb-8e4c-492e-9a9a-52aedc33196c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{b5922482-c686-48e9-bcb3-b3baf8326ac7}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\14_WaveIntrinsics\14_WaveIntrinsics.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Global.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Structs.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Magnify.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Magnify.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Resources.h.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Shaders.list">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Wave.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\14_WaveIntrinsics\Shaders\FSL\Wave.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <None Include="..\..\src\14_WaveIntrinsics\GPUCfg\gpu.cfg">
+      <Filter>Misc</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_Normal.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_QuadReadAcross.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveActiveBallot.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveActiveSum.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveGetLaneIndex.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveGetMaxActiveIndex.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveIsFirstLane.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WavePrefixSum.lua">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="..\..\src\14_WaveIntrinsics\Scripts\Test_WaveReadLaneFirst.lua">
+      <Filter>Scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>

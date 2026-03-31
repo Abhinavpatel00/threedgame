@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source\Shared">
+      <UniqueIdentifier>{1ca8d312-206a-43b0-96b1-224ba3e97b18}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source">
+      <UniqueIdentifier>{6006337a-66ef-4d3c-b65d-e53b3ce0caef}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers\Shared">
+      <UniqueIdentifier>{c08ac74d-5611-4cb0-9d11-751b225826af}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{45289fe3-0859-4b34-a2d0-72b3c6625573}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="FSLShaders">
+      <UniqueIdentifier>{90cc4d1c-5320-4d6d-b2bd-85616a78c3b2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Misc">
+      <UniqueIdentifier>{7d66c7a8-916a-4b06-90ac-6440d4b7b3cf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{67751863-1b28-4c9c-9444-a7eee826a403}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\..\Common_3\Game\ThirdParty\OpenSource\flecs\flecs.c">
+      <Filter>Source\Shared</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\19_CodeHotReload\19_CodeHotReload_Main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\..\..\Common_3\Game\ThirdParty\OpenSource\flecs\flecs.h">
+      <Filter>Headers\Shared</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\19_CodeHotReload\Shaders\FSL\Global.srt.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\19_CodeHotReload\Shaders\FSL\Structs.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Basic.frag.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Basic.vert.fsl">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <FSLShader Include="..\..\src\19_CodeHotReload\Shaders\FSL\Shaders.list">
+      <Filter>FSLShaders</Filter>
+    </FSLShader>
+    <None Include="..\..\src\19_CodeHotReload\GPUCfg\gpu.cfg">
+      <Filter>Misc</Filter>
+    </None>
+    <None Include="..\..\src\19_CodeHotReload\Scripts\Test_HotReload.lua">
+      <Filter>Scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>

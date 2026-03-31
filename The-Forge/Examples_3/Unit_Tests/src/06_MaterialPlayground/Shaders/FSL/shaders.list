@@ -1,0 +1,172 @@
+#include "../Shared.h"
+
+#include "../../../../../../Common_3/Graphics/FSL/defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+#comp BRDFIntegration_SAMPLES_0.comp
+#define IMPORTANCE_SAMPLE_COUNT 0
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_32.comp
+#define IMPORTANCE_SAMPLE_COUNT 32
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_64.comp
+#define IMPORTANCE_SAMPLE_COUNT 64
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_128.comp
+#define IMPORTANCE_SAMPLE_COUNT 128
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_256.comp
+#define IMPORTANCE_SAMPLE_COUNT 256
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+#comp BRDFIntegration_SAMPLES_1024.comp
+#define IMPORTANCE_SAMPLE_COUNT 1024
+#include "PBR_BRDFIntegration.comp.fsl"
+#end
+
+#comp computeIrradianceMap_SAMPLE_DELTA_05.comp
+#define SAMPLE_DELTA 0.5f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_025.comp
+#define SAMPLE_DELTA 0.25f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_0125.comp
+#define SAMPLE_DELTA 0.125f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_005.comp
+#define SAMPLE_DELTA 0.05f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+#comp computeIrradianceMap_SAMPLE_DELTA_0025.comp
+#define SAMPLE_DELTA 0.025f
+#include "PBR_ComputeIrradianceMap.comp.fsl"
+#end
+
+#comp computeSpecularMap_SAMPLES_0.comp
+#define IMPORTANCE_SAMPLE_COUNT 0
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_32.comp
+#define IMPORTANCE_SAMPLE_COUNT 64
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_64.comp
+#define IMPORTANCE_SAMPLE_COUNT 64
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_128.comp
+#define IMPORTANCE_SAMPLE_COUNT 128
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_256.comp
+#define IMPORTANCE_SAMPLE_COUNT 256
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+#comp computeSpecularMap_SAMPLES_1024.comp
+#define IMPORTANCE_SAMPLE_COUNT 1024
+#include "PBR_ComputeSpecularMap.comp.fsl"
+#end
+
+#vert FT_MULTIVIEW fullscreen.vert
+#include "FullScreen.vert.fsl"
+#end
+
+#vert FT_MULTIVIEW hair.vert
+#include "Hair.vert.fsl"
+#end
+
+#comp hair_integrate.comp
+#include "HairIntegrate.comp.fsl"
+#end
+
+#comp hair_length_constraints.comp
+#include "HairLengthConstraints.comp.fsl"
+#end
+
+#comp hair_local_constraints.comp
+#include "HairLocalConstraints.comp.fsl"
+#end
+
+#comp hair_pre_warm.comp
+#include "HairPreWarm.comp.fsl"
+#end
+
+#frag hair_shadow.frag
+#include "HairShadow.frag.fsl"
+#end
+
+#vert hair_shadow.vert
+#include "HairShadow.vert.fsl"
+#end
+
+#comp hair_shock_propagation.comp
+#include "HairShockPropagation.comp.fsl"
+#end
+
+#frag FT_MULTIVIEW hair_short_cut_clear.frag
+#include "HairShortCutClear.frag.fsl"
+#end
+
+#frag FT_MULTIVIEW hair_short_cut_depth_peeling.frag
+#include "HairShortCutDepthPeeling.frag.fsl"
+#end
+
+#frag FT_MULTIVIEW hair_short_cut_fill_color.frag
+#include "HairShortCutFillColor.frag.fsl"
+#end
+
+#frag FT_MULTIVIEW hair_short_cut_resolve_color.frag
+#include "HairShortCutResolveColor.frag.fsl"
+#end
+
+#frag FT_MULTIVIEW hair_short_cut_resolve_depth.frag
+#include "HairShortCutResolveDepth.frag.fsl"
+#end
+
+#comp hair_update_follow_hairs.comp
+#include "HairUpdateFollowHairs.comp.fsl"
+#end
+
+#frag FT_MULTIVIEW renderSceneBRDF.frag
+#include "RenderSceneBRDF.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW renderSceneBRDF.vert
+#include "RenderSceneBRDF.vert.fsl"
+#end
+
+#frag renderSceneShadows.frag
+#include "RenderSceneShadows.frag.fsl"
+#end
+
+#vert renderSceneShadows.vert
+#include "RenderSceneShadows.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW showCapsules.frag
+#include "Capsules.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW showCapsules.vert
+#include "Capsules.vert.fsl"
+#end
+
+#frag FT_MULTIVIEW skybox.frag
+#include "Skybox.frag.fsl"
+#end
+
+#vert FT_MULTIVIEW skybox.vert
+#include "Skybox.vert.fsl"
+#end

@@ -1,5 +1,6 @@
 #include "vk.h"
 #include "tinytypes.h"
+#include "fs.h"
 #include <assert.h>
 #include <signal.h>
 #include <errno.h>
@@ -154,13 +155,10 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
 
     fprintf(stderr, "[VULKAN %s] %s\n", tag, data->pMessage);
     if(severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-    {
-        debug_break();
-    }
 
-    // {
-    //     raise(SIGTRAP);
-    // }
+    {
+        raise(SIGTRAP);
+    }
 
     return VK_FALSE;
 }
@@ -2629,46 +2627,11 @@ static void pipeline_config_validate(const GraphicsPipelineConfig* cfg)
 
 static bool read_file(const char* path, void** out_data, size_t* out_size)
 {
-    *out_data = NULL;
-    *out_size = 0;
-
-    FILE* f = fopen(path, "rb");
-    if(!f)
+    if(!fs_read_all(path, out_data, out_size))
     {
-        log_error("Failed to open '%s' (errno=%d)", path, errno);
+        log_error("Failed to read '%s'", path);
         return false;
     }
-
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    rewind(f);
-
-    if(len <= 0)
-    {
-        log_error("Invalid size for '%s'", path);
-        fclose(f);
-        return false;
-    }
-
-    void* data = malloc((size_t)len);
-    if(!data)
-    {
-        log_error("Out of memory reading '%s'", path);
-        fclose(f);
-        return false;
-    }
-
-    if(fread(data, 1, (size_t)len, f) != (size_t)len)
-    {
-        log_error("Short read for '%s'", path);
-        free(data);
-        fclose(f);
-        return false;
-    }
-
-    fclose(f);
-    *out_data = data;
-    *out_size = (size_t)len;
     return true;
 }
 

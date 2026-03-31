@@ -1,4 +1,8 @@
 https://lup.lub.lu.se/luur/download?func=downloadFile&recordOId=9024910&fileOId=9024911
+
+- network system with some lib enet i guess
+- audio system with soloud
+- file system
 - text rendering 
 - depth of field 
 - toon rendering using vk_toon shadr

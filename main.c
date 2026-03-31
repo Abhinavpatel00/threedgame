@@ -2,6 +2,8 @@
 #include "passes.h"
 #include "gltfloader.h"
 #include "input.h"
+#include "helpers.h"
+#include "fs.h"
 
 #include <dirent.h>
 #include <math.h>
@@ -10,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define BLOCKY_DIR "assets/blocky/Models/GLB format"
 #define PETS_DIR "assets/cubepets/Models/GLB format"
@@ -128,13 +131,20 @@ typedef struct GltfSceneInstance
 {
     GltfGpuModel model;
     vec3         position;
-    bool         bloom_enabled;
-    vec3         bloom_color;
-    uint32_t     animation_index;
-    float        animation_time;
-    float        animation_speed;
-    bool         animation_paused;
+    bool         use_transform;
+    union
+    {
+        vec3 rotation;
+        mat4 transform;
+    } xform;
+    bool     bloom_enabled;
+    vec3     bloom_color;
+    uint32_t animation_index;
+    float    animation_time;
+    float    animation_speed;
+    bool     animation_paused;
 } GltfSceneInstance;
+
 
 typedef enum PrimitiveShape
 {
@@ -145,23 +155,42 @@ typedef enum PrimitiveShape
     PRIM_SPHERE,
     PRIM_CYLINDER,
     PRIM_CONE,
+    PRIM_PYRAMID,
+    PRIM_CAPSULE,
+    PRIM_TORUS,
 } PrimitiveShape;
+
+typedef struct ObstacleInstance
+{
+    GltfSceneInstance instance;
+    PrimitiveShape    shape;
+    vec3              size;
+    vec3              half_extents;
+} ObstacleInstance;
+
 
 typedef struct Draw3DDesc
 {
-    const char* gltf_path;
+    const char*    gltf_path;
     PrimitiveShape primitive;
-    vec3        primitive_size;
-    vec3        position;
-    bool        bloom_enabled;
-    vec3        bloom_color;
-    uint32_t    animation_index;
-    float       animation_time;
-    float       animation_speed;
-    bool        animation_paused;
+    vec3           primitive_size;
+    vec3           position;
+    bool           use_transform;
+    union
+    {
+        vec3 rotation;
+        mat4 transform;
+    } xform;
+    bool     bloom_enabled;
+    vec3     bloom_color;
+    uint32_t animation_index;
+    float    animation_time;
+    float    animation_speed;
+    bool     animation_paused;
 } Draw3DDesc;
 
-static int cmp_string_ptrs(const void* a, const void* b)
+static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance);
+static int  cmp_string_ptrs(const void* a, const void* b)
 {
     const char* const* lhs = (const char* const*)a;
     const char* const* rhs = (const char* const*)b;
@@ -259,26 +288,6 @@ static void free_glb_paths(char** paths, uint32_t count)
     free(paths);
 }
 
-static void cycle_animation_clip(GltfSceneInstance* instance, int delta)
-{
-    if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
-        return;
-
-    uint32_t count = instance->model.cpu->animation_count;
-    uint32_t index = instance->animation_index;
-    if(index >= count)
-        index = 0;
-
-    int next_index = (int)index + delta;
-    while(next_index < 0)
-        next_index += (int)count;
-    while(next_index >= (int)count)
-        next_index -= (int)count;
-
-    instance->animation_index = (uint32_t)next_index;
-    instance->animation_time  = 0.0f;
-}
-
 static uint32_t find_animation_by_name(const GltfSceneInstance* instance, const char* name, uint32_t fallback)
 {
     if(!instance || !instance->model.cpu || instance->model.cpu->animation_count == 0)
@@ -299,24 +308,6 @@ static uint32_t find_animation_by_name(const GltfSceneInstance* instance, const 
 static double bytes_to_mib(VkDeviceSize bytes)
 {
     return (double)bytes / (1024.0 * 1024.0);
-}
-
-static uint64_t pack_cell_key_i32(int32_t cell_x, int32_t cell_z)
-{
-    return ((uint64_t)(uint32_t)cell_x << 32) | (uint64_t)(uint32_t)cell_z;
-}
-
-static void mu_multi_index_reset(mu_multi_index* index)
-{
-    if(!index)
-        return;
-
-    index->node_count = 0;
-    index->free_head  = MU_MULTI_INDEX_NONE;
-    index->map_count  = 0;
-
-    if(index->map_states && index->map_capacity > 0)
-        memset(index->map_states, 0, index->map_capacity * sizeof(uint8_t));
 }
 
 static void update_animation_time(GltfSceneInstance* instance, float delta_seconds)
@@ -541,22 +532,53 @@ static void primitive_mesh_compute_bounds(GLTFMesh* mesh)
         return;
 
     float* positions = (float*)mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION];
-    mesh->min[0]     = mesh->max[0] = positions[0];
-    mesh->min[1]     = mesh->max[1] = positions[1];
-    mesh->min[2]     = mesh->max[2] = positions[2];
+    mesh->min[0] = mesh->max[0] = positions[0];
+    mesh->min[1] = mesh->max[1] = positions[1];
+    mesh->min[2] = mesh->max[2] = positions[2];
 
     for(uint32_t i = 1; i < mesh->vertex_count; ++i)
     {
         float x = positions[i * 3u + 0u];
         float y = positions[i * 3u + 1u];
         float z = positions[i * 3u + 2u];
-        if(x < mesh->min[0]) mesh->min[0] = x;
-        if(y < mesh->min[1]) mesh->min[1] = y;
-        if(z < mesh->min[2]) mesh->min[2] = z;
-        if(x > mesh->max[0]) mesh->max[0] = x;
-        if(y > mesh->max[1]) mesh->max[1] = y;
-        if(z > mesh->max[2]) mesh->max[2] = z;
+        if(x < mesh->min[0])
+            mesh->min[0] = x;
+        if(y < mesh->min[1])
+            mesh->min[1] = y;
+        if(z < mesh->min[2])
+            mesh->min[2] = z;
+        if(x > mesh->max[0])
+            mesh->max[0] = x;
+        if(y > mesh->max[1])
+            mesh->max[1] = y;
+        if(z > mesh->max[2])
+            mesh->max[2] = z;
     }
+}
+
+static void triangle_normal(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float* out_nx, float* out_ny, float* out_nz)
+{
+    float ux = bx - ax;
+    float uy = by - ay;
+    float uz = bz - az;
+    float vx = cx - ax;
+    float vy = cy - ay;
+    float vz = cz - az;
+
+    float nx  = uy * vz - uz * vy;
+    float ny  = uz * vx - ux * vz;
+    float nz  = ux * vy - uy * vx;
+    float len = sqrtf(nx * nx + ny * ny + nz * nz);
+    if(len > 0.0f)
+    {
+        nx /= len;
+        ny /= len;
+        nz /= len;
+    }
+
+    *out_nx = nx;
+    *out_ny = ny;
+    *out_nz = nz;
 }
 
 static bool build_primitive_mesh_box(const vec3 size, GLTFMesh* out_mesh)
@@ -573,10 +595,10 @@ static bool build_primitive_mesh_box(const vec3 size, GLTFMesh* out_mesh)
     const uint32_t vertex_count = 24;
     const uint32_t index_count  = 36;
 
-    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
-    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
 
     if(!positions || !normals || !uvs || !indices)
     {
@@ -588,24 +610,17 @@ static bool build_primitive_mesh_box(const vec3 size, GLTFMesh* out_mesh)
     }
 
     const float face_positions[6][12] = {
-        { hx, -hy, -hz,  hx, -hy,  hz,  hx,  hy,  hz,  hx,  hy, -hz },
-        { -hx, -hy,  hz, -hx, -hy, -hz, -hx,  hy, -hz, -hx,  hy,  hz },
-        { -hx,  hy, -hz,  hx,  hy, -hz,  hx,  hy,  hz, -hx,  hy,  hz },
-        { -hx, -hy,  hz,  hx, -hy,  hz,  hx, -hy, -hz, -hx, -hy, -hz },
-        { -hx, -hy,  hz, -hx,  hy,  hz,  hx,  hy,  hz,  hx, -hy,  hz },
-        {  hx, -hy, -hz,  hx,  hy, -hz, -hx,  hy, -hz, -hx, -hy, -hz },
+        {hx, -hy, -hz, hx, -hy, hz, hx, hy, hz, hx, hy, -hz}, {-hx, -hy, hz, -hx, -hy, -hz, -hx, hy, -hz, -hx, hy, hz},
+        {-hx, hy, -hz, hx, hy, -hz, hx, hy, hz, -hx, hy, hz}, {-hx, -hy, hz, hx, -hy, hz, hx, -hy, -hz, -hx, -hy, -hz},
+        {-hx, -hy, hz, -hx, hy, hz, hx, hy, hz, hx, -hy, hz}, {hx, -hy, -hz, hx, hy, -hz, -hx, hy, -hz, -hx, -hy, -hz},
     };
 
     const float face_normals[6][3] = {
-        { 1.0f, 0.0f, 0.0f },
-        { -1.0f, 0.0f, 0.0f },
-        { 0.0f, 1.0f, 0.0f },
-        { 0.0f, -1.0f, 0.0f },
-        { 0.0f, 0.0f, 1.0f },
-        { 0.0f, 0.0f, -1.0f },
+        {1.0f, 0.0f, 0.0f},  {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},  {0.0f, 0.0f, -1.0f},
     };
 
-    const float face_uvs[8] = { 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f };
+    const float face_uvs[8] = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
 
     uint32_t v = 0;
     uint32_t i = 0;
@@ -635,9 +650,9 @@ static bool build_primitive_mesh_box(const vec3 size, GLTFMesh* out_mesh)
         indices[i++]  = base + 0u;
     }
 
-    out_mesh->vertex_count = vertex_count;
-    out_mesh->index_count  = index_count;
-    out_mesh->index        = indices;
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
@@ -659,10 +674,10 @@ static bool build_primitive_mesh_plane(const vec3 size, GLTFMesh* out_mesh)
     const uint32_t vertex_count = 4;
     const uint32_t index_count  = 6;
 
-    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
-    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
 
     if(!positions || !normals || !uvs || !indices)
     {
@@ -673,10 +688,18 @@ static bool build_primitive_mesh_plane(const vec3 size, GLTFMesh* out_mesh)
         return false;
     }
 
-    positions[0] = -hx; positions[1] = 0.0f; positions[2] = -hz;
-    positions[3] =  hx; positions[4] = 0.0f; positions[5] = -hz;
-    positions[6] =  hx; positions[7] = 0.0f; positions[8] =  hz;
-    positions[9] = -hx; positions[10] = 0.0f; positions[11] =  hz;
+    positions[0]  = -hx;
+    positions[1]  = 0.0f;
+    positions[2]  = -hz;
+    positions[3]  = hx;
+    positions[4]  = 0.0f;
+    positions[5]  = -hz;
+    positions[6]  = hx;
+    positions[7]  = 0.0f;
+    positions[8]  = hz;
+    positions[9]  = -hx;
+    positions[10] = 0.0f;
+    positions[11] = hz;
 
     for(uint32_t v = 0; v < vertex_count; ++v)
     {
@@ -685,17 +708,25 @@ static bool build_primitive_mesh_plane(const vec3 size, GLTFMesh* out_mesh)
         normals[v * 3u + 2u] = 0.0f;
     }
 
-    uvs[0] = 0.0f; uvs[1] = 0.0f;
-    uvs[2] = 1.0f; uvs[3] = 0.0f;
-    uvs[4] = 1.0f; uvs[5] = 1.0f;
-    uvs[6] = 0.0f; uvs[7] = 1.0f;
+    uvs[0] = 0.0f;
+    uvs[1] = 0.0f;
+    uvs[2] = 1.0f;
+    uvs[3] = 0.0f;
+    uvs[4] = 1.0f;
+    uvs[5] = 1.0f;
+    uvs[6] = 0.0f;
+    uvs[7] = 1.0f;
 
-    indices[0] = 0u; indices[1] = 1u; indices[2] = 2u;
-    indices[3] = 2u; indices[4] = 3u; indices[5] = 0u;
+    indices[0] = 0u;
+    indices[1] = 1u;
+    indices[2] = 2u;
+    indices[3] = 2u;
+    indices[4] = 3u;
+    indices[5] = 0u;
 
-    out_mesh->vertex_count = vertex_count;
-    out_mesh->index_count  = index_count;
-    out_mesh->index        = indices;
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
@@ -711,16 +742,16 @@ static bool build_primitive_mesh_sphere(const vec3 size, GLTFMesh* out_mesh)
 
     memset(out_mesh, 0, sizeof(*out_mesh));
 
-    const float radius = size[0] * 0.5f;
-    const uint32_t segments_u = 24;
-    const uint32_t segments_v = 16;
+    const float    radius       = size[0] * 0.5f;
+    const uint32_t segments_u   = 24;
+    const uint32_t segments_v   = 16;
     const uint32_t vertex_count = (segments_u + 1u) * (segments_v + 1u);
     const uint32_t index_count  = segments_u * segments_v * 6u;
 
-    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
-    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
 
     if(!positions || !normals || !uvs || !indices)
     {
@@ -731,21 +762,21 @@ static bool build_primitive_mesh_sphere(const vec3 size, GLTFMesh* out_mesh)
         return false;
     }
 
-    const float pi = 3.14159265358979323846f;
+    const float pi     = 3.14159265358979323846f;
     const float two_pi = 6.28318530717958647692f;
 
     uint32_t v = 0;
     for(uint32_t y = 0; y <= segments_v; ++y)
     {
-        float vy = (float)y / (float)segments_v;
+        float vy    = (float)y / (float)segments_v;
         float theta = vy * pi;
         float sin_t = sinf(theta);
         float cos_t = cosf(theta);
 
         for(uint32_t x = 0; x <= segments_u; ++x)
         {
-            float vx = (float)x / (float)segments_u;
-            float phi = vx * two_pi;
+            float vx    = (float)x / (float)segments_u;
+            float phi   = vx * two_pi;
             float sin_p = sinf(phi);
             float cos_p = cosf(phi);
 
@@ -770,7 +801,7 @@ static bool build_primitive_mesh_sphere(const vec3 size, GLTFMesh* out_mesh)
     uint32_t i = 0;
     for(uint32_t y = 0; y < segments_v; ++y)
     {
-        uint32_t row = y * (segments_u + 1u);
+        uint32_t row  = y * (segments_u + 1u);
         uint32_t next = row + segments_u + 1u;
         for(uint32_t x = 0; x < segments_u; ++x)
         {
@@ -788,9 +819,9 @@ static bool build_primitive_mesh_sphere(const vec3 size, GLTFMesh* out_mesh)
         }
     }
 
-    out_mesh->vertex_count = vertex_count;
-    out_mesh->index_count  = index_count;
-    out_mesh->index        = indices;
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
@@ -806,21 +837,21 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
 
     memset(out_mesh, 0, sizeof(*out_mesh));
 
-    const float radius = size[0] * 0.5f;
-    const float height = size[1];
+    const float    radius   = size[0] * 0.5f;
+    const float    height   = size[1];
     const uint32_t segments = 24;
 
-    const uint32_t side_verts = (segments + 1u) * 2u;
-    const uint32_t cap_verts  = segments + 1u;
-    const uint32_t vertex_count = side_verts + cap_verts + (cone ? 0u : cap_verts);
+    const uint32_t side_verts       = (segments + 1u) * 2u;
+    const uint32_t cap_verts        = segments + 1u;
+    const uint32_t vertex_count     = side_verts + cap_verts + (cone ? 0u : cap_verts);
     const uint32_t side_index_count = segments * 6u;
-    const uint32_t cap_index_count = segments * 3u;
-    const uint32_t index_count = side_index_count + cap_index_count + (cone ? 0u : cap_index_count);
+    const uint32_t cap_index_count  = segments * 3u;
+    const uint32_t index_count      = side_index_count + cap_index_count + (cone ? 0u : cap_index_count);
 
-    float* positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
-    float* uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
-    uint32_t* indices = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
 
     if(!positions || !normals || !uvs || !indices)
     {
@@ -837,33 +868,33 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
     uint32_t v = 0;
     for(uint32_t s = 0; s <= segments; ++s)
     {
-        float t = (float)s / (float)segments;
+        float t   = (float)s / (float)segments;
         float ang = t * two_pi;
-        float cs = cosf(ang);
-        float sn = sinf(ang);
+        float cs  = cosf(ang);
+        float sn  = sinf(ang);
 
-        float nx = cs;
-        float nz = sn;
+        float nx    = cs;
+        float nz    = sn;
         float top_r = cone ? 0.0f : radius;
 
         positions[v * 3u + 0u] = cs * radius;
         positions[v * 3u + 1u] = -half_h;
         positions[v * 3u + 2u] = sn * radius;
-        normals[v * 3u + 0u] = nx;
-        normals[v * 3u + 1u] = cone ? radius / height : 0.0f;
-        normals[v * 3u + 2u] = nz;
-        uvs[v * 2u + 0u] = t;
-        uvs[v * 2u + 1u] = 0.0f;
+        normals[v * 3u + 0u]   = nx;
+        normals[v * 3u + 1u]   = cone ? radius / height : 0.0f;
+        normals[v * 3u + 2u]   = nz;
+        uvs[v * 2u + 0u]       = t;
+        uvs[v * 2u + 1u]       = 0.0f;
         ++v;
 
         positions[v * 3u + 0u] = cs * top_r;
         positions[v * 3u + 1u] = half_h;
         positions[v * 3u + 2u] = sn * top_r;
-        normals[v * 3u + 0u] = nx;
-        normals[v * 3u + 1u] = cone ? radius / height : 0.0f;
-        normals[v * 3u + 2u] = nz;
-        uvs[v * 2u + 0u] = t;
-        uvs[v * 2u + 1u] = 1.0f;
+        normals[v * 3u + 0u]   = nx;
+        normals[v * 3u + 1u]   = cone ? radius / height : 0.0f;
+        normals[v * 3u + 2u]   = nz;
+        uvs[v * 2u + 0u]       = t;
+        uvs[v * 2u + 1u]       = 1.0f;
         ++v;
     }
 
@@ -871,27 +902,27 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
     positions[v * 3u + 0u] = 0.0f;
     positions[v * 3u + 1u] = -half_h;
     positions[v * 3u + 2u] = 0.0f;
-    normals[v * 3u + 0u] = 0.0f;
-    normals[v * 3u + 1u] = -1.0f;
-    normals[v * 3u + 2u] = 0.0f;
-    uvs[v * 2u + 0u] = 0.5f;
-    uvs[v * 2u + 1u] = 0.5f;
+    normals[v * 3u + 0u]   = 0.0f;
+    normals[v * 3u + 1u]   = -1.0f;
+    normals[v * 3u + 2u]   = 0.0f;
+    uvs[v * 2u + 0u]       = 0.5f;
+    uvs[v * 2u + 1u]       = 0.5f;
     ++v;
 
     for(uint32_t s = 0; s < segments; ++s)
     {
-        float t = (float)s / (float)segments;
-        float ang = t * two_pi;
-        float cs = cosf(ang);
-        float sn = sinf(ang);
+        float t                = (float)s / (float)segments;
+        float ang              = t * two_pi;
+        float cs               = cosf(ang);
+        float sn               = sinf(ang);
         positions[v * 3u + 0u] = cs * radius;
         positions[v * 3u + 1u] = -half_h;
         positions[v * 3u + 2u] = sn * radius;
-        normals[v * 3u + 0u] = 0.0f;
-        normals[v * 3u + 1u] = -1.0f;
-        normals[v * 3u + 2u] = 0.0f;
-        uvs[v * 2u + 0u] = (cs + 1.0f) * 0.5f;
-        uvs[v * 2u + 1u] = (sn + 1.0f) * 0.5f;
+        normals[v * 3u + 0u]   = 0.0f;
+        normals[v * 3u + 1u]   = -1.0f;
+        normals[v * 3u + 2u]   = 0.0f;
+        uvs[v * 2u + 0u]       = (cs + 1.0f) * 0.5f;
+        uvs[v * 2u + 1u]       = (sn + 1.0f) * 0.5f;
         ++v;
     }
 
@@ -901,27 +932,27 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
         positions[v * 3u + 0u] = 0.0f;
         positions[v * 3u + 1u] = half_h;
         positions[v * 3u + 2u] = 0.0f;
-        normals[v * 3u + 0u] = 0.0f;
-        normals[v * 3u + 1u] = 1.0f;
-        normals[v * 3u + 2u] = 0.0f;
-        uvs[v * 2u + 0u] = 0.5f;
-        uvs[v * 2u + 1u] = 0.5f;
+        normals[v * 3u + 0u]   = 0.0f;
+        normals[v * 3u + 1u]   = 1.0f;
+        normals[v * 3u + 2u]   = 0.0f;
+        uvs[v * 2u + 0u]       = 0.5f;
+        uvs[v * 2u + 1u]       = 0.5f;
         ++v;
 
         for(uint32_t s = 0; s < segments; ++s)
         {
-            float t = (float)s / (float)segments;
-            float ang = t * two_pi;
-            float cs = cosf(ang);
-            float sn = sinf(ang);
+            float t                = (float)s / (float)segments;
+            float ang              = t * two_pi;
+            float cs               = cosf(ang);
+            float sn               = sinf(ang);
             positions[v * 3u + 0u] = cs * radius;
             positions[v * 3u + 1u] = half_h;
             positions[v * 3u + 2u] = sn * radius;
-            normals[v * 3u + 0u] = 0.0f;
-            normals[v * 3u + 1u] = 1.0f;
-            normals[v * 3u + 2u] = 0.0f;
-            uvs[v * 2u + 0u] = (cs + 1.0f) * 0.5f;
-            uvs[v * 2u + 1u] = (sn + 1.0f) * 0.5f;
+            normals[v * 3u + 0u]   = 0.0f;
+            normals[v * 3u + 1u]   = 1.0f;
+            normals[v * 3u + 2u]   = 0.0f;
+            uvs[v * 2u + 0u]       = (cs + 1.0f) * 0.5f;
+            uvs[v * 2u + 1u]       = (sn + 1.0f) * 0.5f;
             ++v;
         }
     }
@@ -930,24 +961,24 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
     for(uint32_t s = 0; s < segments; ++s)
     {
         uint32_t base = s * 2u;
-        uint32_t a = base + 0u;
-        uint32_t b = base + 1u;
-        uint32_t c = base + 3u;
-        uint32_t d = base + 2u;
-        indices[i++] = a;
-        indices[i++] = b;
-        indices[i++] = c;
-        indices[i++] = c;
-        indices[i++] = d;
-        indices[i++] = a;
+        uint32_t a    = base + 0u;
+        uint32_t b    = base + 1u;
+        uint32_t c    = base + 3u;
+        uint32_t d    = base + 2u;
+        indices[i++]  = a;
+        indices[i++]  = b;
+        indices[i++]  = c;
+        indices[i++]  = c;
+        indices[i++]  = d;
+        indices[i++]  = a;
     }
 
     uint32_t bottom_ring = bottom_center + 1u;
     for(uint32_t s = 0; s < segments; ++s)
     {
-        uint32_t a = bottom_center;
-        uint32_t b = bottom_ring + s;
-        uint32_t c = bottom_ring + ((s + 1u) % segments);
+        uint32_t a   = bottom_center;
+        uint32_t b   = bottom_ring + s;
+        uint32_t c   = bottom_ring + ((s + 1u) % segments);
         indices[i++] = a;
         indices[i++] = c;
         indices[i++] = b;
@@ -958,18 +989,353 @@ static bool build_primitive_mesh_cylinder(const vec3 size, bool cone, GLTFMesh* 
         uint32_t top_ring = top_center + 1u;
         for(uint32_t s = 0; s < segments; ++s)
         {
-            uint32_t a = top_center;
-            uint32_t b = top_ring + s;
-            uint32_t c = top_ring + ((s + 1u) % segments);
+            uint32_t a   = top_center;
+            uint32_t b   = top_ring + s;
+            uint32_t c   = top_ring + ((s + 1u) % segments);
             indices[i++] = a;
             indices[i++] = b;
             indices[i++] = c;
         }
     }
 
-    out_mesh->vertex_count = vertex_count;
-    out_mesh->index_count  = index_count;
-    out_mesh->index        = indices;
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_pyramid(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    const float hx = size[0] * 0.5f;
+    const float hz = size[2] * 0.5f;
+    const float hy = size[1] * 0.5f;
+
+    const uint32_t vertex_count = 18;
+    const uint32_t index_count  = 18;
+
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    float bx0 = -hx, by0 = -hy, bz0 = -hz;
+    float bx1 = hx, by1 = -hy, bz1 = -hz;
+    float bx2 = hx, by2 = -hy, bz2 = hz;
+    float bx3 = -hx, by3 = -hy, bz3 = hz;
+    float ax = 0.0f, ay = hy, az = 0.0f;
+
+    uint32_t v = 0;
+
+    float nbase_x = 0.0f, nbase_y = -1.0f, nbase_z = 0.0f;
+
+    float base_positions[6][3] = {
+        {bx0, by0, bz0}, {bx1, by1, bz1}, {bx2, by2, bz2}, {bx0, by0, bz0}, {bx2, by2, bz2}, {bx3, by3, bz3},
+    };
+
+    float base_uvs[6][2] = {
+        {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f},
+    };
+
+    for(uint32_t i = 0; i < 6; ++i)
+    {
+        positions[v * 3u + 0u] = base_positions[i][0];
+        positions[v * 3u + 1u] = base_positions[i][1];
+        positions[v * 3u + 2u] = base_positions[i][2];
+        normals[v * 3u + 0u]   = nbase_x;
+        normals[v * 3u + 1u]   = nbase_y;
+        normals[v * 3u + 2u]   = nbase_z;
+        uvs[v * 2u + 0u]       = base_uvs[i][0];
+        uvs[v * 2u + 1u]       = base_uvs[i][1];
+        indices[v]             = v;
+        ++v;
+    }
+
+    float side_tris[4][3][3] = {
+        {{ax, ay, az}, {bx1, by1, bz1}, {bx0, by0, bz0}},
+        {{ax, ay, az}, {bx2, by2, bz2}, {bx1, by1, bz1}},
+        {{ax, ay, az}, {bx3, by3, bz3}, {bx2, by2, bz2}},
+        {{ax, ay, az}, {bx0, by0, bz0}, {bx3, by3, bz3}},
+    };
+
+    float side_uvs[3][2] = {{0.5f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}};
+
+    for(uint32_t s = 0; s < 4; ++s)
+    {
+        float nx = 0.0f, ny = 0.0f, nz = 0.0f;
+        triangle_normal(side_tris[s][0][0], side_tris[s][0][1], side_tris[s][0][2], side_tris[s][1][0], side_tris[s][1][1],
+                        side_tris[s][1][2], side_tris[s][2][0], side_tris[s][2][1], side_tris[s][2][2], &nx, &ny, &nz);
+
+        for(uint32_t k = 0; k < 3; ++k)
+        {
+            positions[v * 3u + 0u] = side_tris[s][k][0];
+            positions[v * 3u + 1u] = side_tris[s][k][1];
+            positions[v * 3u + 2u] = side_tris[s][k][2];
+            normals[v * 3u + 0u]   = nx;
+            normals[v * 3u + 1u]   = ny;
+            normals[v * 3u + 2u]   = nz;
+            uvs[v * 2u + 0u]       = side_uvs[k][0];
+            uvs[v * 2u + 1u]       = side_uvs[k][1];
+            indices[v]             = v;
+            ++v;
+        }
+    }
+
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_capsule(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    float radius = size[0] * 0.5f;
+    float height = size[1];
+    if(radius <= 0.0f)
+        radius = 0.5f;
+    if(height <= 0.0f)
+        height = radius * 2.0f;
+
+    float cylinder_height = height - 2.0f * radius;
+    if(cylinder_height < 0.0f)
+        cylinder_height = 0.0f;
+    float half_cyl = cylinder_height * 0.5f;
+
+    const uint32_t segments_u    = 24;
+    const uint32_t hemi_segments = 8;
+    const uint32_t cyl_segments  = cylinder_height > 0.0f ? 4u : 0u;
+    const uint32_t ring_count    = (hemi_segments + 1u) + cyl_segments + hemi_segments;
+    const uint32_t vertex_count  = ring_count * (segments_u + 1u);
+    const uint32_t index_count   = (ring_count - 1u) * segments_u * 6u;
+
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    const float pi     = 3.14159265358979323846f;
+    const float two_pi = 6.28318530717958647692f;
+
+    uint32_t v = 0;
+    for(uint32_t ring = 0; ring < ring_count; ++ring)
+    {
+        float ring_y = 0.0f;
+        float ring_r = radius;
+        float ny     = 0.0f;
+        float nr     = 1.0f;
+
+        if(ring <= hemi_segments)
+        {
+            float t     = (float)ring / (float)hemi_segments;
+            float theta = t * (pi * 0.5f);
+            ring_y      = cosf(theta) * radius + half_cyl;
+            ring_r      = sinf(theta) * radius;
+            ny          = cosf(theta);
+            nr          = sinf(theta);
+        }
+        else if(ring < hemi_segments + 1u + cyl_segments)
+        {
+            if(cyl_segments > 0u)
+            {
+                uint32_t cyl_index = ring - (hemi_segments + 1u);
+                float    t         = (float)(cyl_index + 1u) / (float)(cyl_segments + 1u);
+                ring_y             = half_cyl - t * cylinder_height;
+            }
+            else
+            {
+                ring_y = -half_cyl;
+            }
+            ring_r = radius;
+            ny     = 0.0f;
+            nr     = 1.0f;
+        }
+        else
+        {
+            uint32_t bottom_ring = ring - (hemi_segments + 1u + cyl_segments);
+            float    t           = (float)bottom_ring / (float)hemi_segments;
+            float    theta       = t * (pi * 0.5f);
+            ring_y               = -cosf(theta) * radius - half_cyl;
+            ring_r               = sinf(theta) * radius;
+            ny                   = -cosf(theta);
+            nr                   = sinf(theta);
+        }
+
+        for(uint32_t s = 0; s <= segments_u; ++s)
+        {
+            float phi = (float)s / (float)segments_u * two_pi;
+            float cs  = cosf(phi);
+            float sn  = sinf(phi);
+
+            positions[v * 3u + 0u] = cs * ring_r;
+            positions[v * 3u + 1u] = ring_y;
+            positions[v * 3u + 2u] = sn * ring_r;
+
+            normals[v * 3u + 0u] = cs * nr;
+            normals[v * 3u + 1u] = ny;
+            normals[v * 3u + 2u] = sn * nr;
+
+            uvs[v * 2u + 0u] = (float)s / (float)segments_u;
+            uvs[v * 2u + 1u] = (float)ring / (float)(ring_count - 1u);
+            ++v;
+        }
+    }
+
+    uint32_t i = 0;
+    for(uint32_t ring = 0; ring + 1u < ring_count; ++ring)
+    {
+        uint32_t row  = ring * (segments_u + 1u);
+        uint32_t next = row + segments_u + 1u;
+        for(uint32_t s = 0; s < segments_u; ++s)
+        {
+            uint32_t a   = row + s;
+            uint32_t b   = next + s;
+            uint32_t c   = next + s + 1u;
+            uint32_t d   = row + s + 1u;
+            indices[i++] = a;
+            indices[i++] = b;
+            indices[i++] = c;
+            indices[i++] = c;
+            indices[i++] = d;
+            indices[i++] = a;
+        }
+    }
+
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
+    out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
+
+    primitive_mesh_compute_bounds(out_mesh);
+    return true;
+}
+
+static bool build_primitive_mesh_torus(const vec3 size, GLTFMesh* out_mesh)
+{
+    if(!out_mesh)
+        return false;
+
+    memset(out_mesh, 0, sizeof(*out_mesh));
+
+    float major_radius = size[0] * 0.5f;
+    float tube_radius  = size[1] * 0.5f;
+    if(major_radius <= 0.0f)
+        major_radius = 0.75f;
+    if(tube_radius <= 0.0f)
+        tube_radius = major_radius * 0.35f;
+
+    const uint32_t segments_major = 32;
+    const uint32_t segments_tube  = 16;
+    const uint32_t vertex_count   = (segments_major + 1u) * (segments_tube + 1u);
+    const uint32_t index_count    = segments_major * segments_tube * 6u;
+
+    float*    positions = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    normals   = (float*)malloc((size_t)vertex_count * 3u * sizeof(float));
+    float*    uvs       = (float*)malloc((size_t)vertex_count * 2u * sizeof(float));
+    uint32_t* indices   = (uint32_t*)malloc((size_t)index_count * sizeof(uint32_t));
+
+    if(!positions || !normals || !uvs || !indices)
+    {
+        free(positions);
+        free(normals);
+        free(uvs);
+        free(indices);
+        return false;
+    }
+
+    const float two_pi = 6.28318530717958647692f;
+
+    uint32_t v = 0;
+    for(uint32_t u = 0; u <= segments_major; ++u)
+    {
+        float tu  = (float)u / (float)segments_major;
+        float phi = tu * two_pi;
+        float cp  = cosf(phi);
+        float sp  = sinf(phi);
+
+        for(uint32_t t = 0; t <= segments_tube; ++t)
+        {
+            float tv    = (float)t / (float)segments_tube;
+            float theta = tv * two_pi;
+            float ct    = cosf(theta);
+            float st    = sinf(theta);
+
+            float r                = major_radius + tube_radius * ct;
+            positions[v * 3u + 0u] = r * cp;
+            positions[v * 3u + 1u] = tube_radius * st;
+            positions[v * 3u + 2u] = r * sp;
+
+            normals[v * 3u + 0u] = ct * cp;
+            normals[v * 3u + 1u] = st;
+            normals[v * 3u + 2u] = ct * sp;
+
+            uvs[v * 2u + 0u] = tu;
+            uvs[v * 2u + 1u] = tv;
+            ++v;
+        }
+    }
+
+    uint32_t i = 0;
+    for(uint32_t u = 0; u < segments_major; ++u)
+    {
+        uint32_t row  = u * (segments_tube + 1u);
+        uint32_t next = row + segments_tube + 1u;
+        for(uint32_t t = 0; t < segments_tube; ++t)
+        {
+            uint32_t a   = row + t;
+            uint32_t b   = next + t;
+            uint32_t c   = next + t + 1u;
+            uint32_t d   = row + t + 1u;
+            indices[i++] = a;
+            indices[i++] = b;
+            indices[i++] = c;
+            indices[i++] = c;
+            indices[i++] = d;
+            indices[i++] = a;
+        }
+    }
+
+    out_mesh->vertex_count                             = vertex_count;
+    out_mesh->index_count                              = index_count;
+    out_mesh->index                                    = indices;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_POSITION] = positions;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_NORMAL]   = normals;
     out_mesh->attributes[GLTF_ATTRIBUTE_TYPE_TEXCOORD] = uvs;
@@ -993,6 +1359,12 @@ static bool build_primitive_mesh(PrimitiveShape shape, const vec3 size, GLTFMesh
             return build_primitive_mesh_cylinder(size, false, out_mesh);
         case PRIM_CONE:
             return build_primitive_mesh_cylinder(size, true, out_mesh);
+        case PRIM_PYRAMID:
+            return build_primitive_mesh_pyramid(size, out_mesh);
+        case PRIM_CAPSULE:
+            return build_primitive_mesh_capsule(size, out_mesh);
+        case PRIM_TORUS:
+            return build_primitive_mesh_torus(size, out_mesh);
         default:
             return false;
     }
@@ -1005,7 +1377,7 @@ static GLTFContainer* create_primitive_container(PrimitiveShape shape, const vec
         return NULL;
 
     gltf->mesh_count = 1;
-    gltf->meshes = (GLTFMesh*)calloc(1, sizeof(GLTFMesh));
+    gltf->meshes     = (GLTFMesh*)calloc(1, sizeof(GLTFMesh));
     if(!gltf->meshes)
     {
         free(gltf);
@@ -1271,14 +1643,177 @@ static void gltf_gpu_model_destroy(GltfGpuModel* model)
     memset(model, 0, sizeof(*model));
 }
 
-static void destroy_scene_instances(GltfSceneInstance* instances, uint32_t loaded_count)
+static void destroy_obstacles(ObstacleInstance* obstacles, uint32_t count)
 {
-    if(!instances)
+    if(!obstacles)
         return;
 
-    for(uint32_t i = 0; i < loaded_count; ++i)
-        gltf_gpu_model_destroy(&instances[i].model);
-    free(instances);
+    for(uint32_t i = 0; i < count; ++i)
+        gltf_gpu_model_destroy(&obstacles[i].instance.model);
+    free(obstacles);
+}
+
+static void obstacle_set_half_extents(ObstacleInstance* obstacle)
+{
+    if(!obstacle)
+        return;
+
+    obstacle->half_extents[0] = obstacle->size[0] * 0.5f;
+    obstacle->half_extents[1] = obstacle->size[1] * 0.5f;
+    obstacle->half_extents[2] = obstacle->size[2] * 0.5f;
+
+    if(obstacle->shape == PRIM_TORUS)
+    {
+        float major               = obstacle->size[0] * 0.5f;
+        float tube                = obstacle->size[1] * 0.5f;
+        obstacle->half_extents[0] = major + tube;
+        obstacle->half_extents[2] = major + tube;
+        obstacle->half_extents[1] = tube;
+    }
+}
+
+static PrimitiveShape random_obstacle_shape(void)
+{
+    PrimitiveShape shapes[] = {
+        PRIM_CUBE, PRIM_CUBOID, PRIM_SPHERE, PRIM_CYLINDER, PRIM_CONE, PRIM_PYRAMID, PRIM_CAPSULE, PRIM_TORUS,
+    };
+
+    int index = rand_int_range(0, (int)(sizeof(shapes) / sizeof(shapes[0]) - 1u));
+    return shapes[index];
+}
+
+static void random_obstacle_size(PrimitiveShape shape, vec3 out_size)
+{
+    if(!out_size)
+        return;
+
+    switch(shape)
+    {
+        case PRIM_CUBE:
+            out_size[0] = rand_float_range(0.7f, 1.6f);
+            out_size[1] = out_size[0];
+            out_size[2] = out_size[0];
+            break;
+        case PRIM_CUBOID:
+            out_size[0] = rand_float_range(0.6f, 1.6f);
+            out_size[1] = rand_float_range(0.6f, 2.0f);
+            out_size[2] = rand_float_range(0.6f, 1.6f);
+            break;
+        case PRIM_SPHERE:
+            out_size[0] = rand_float_range(0.8f, 1.6f);
+            out_size[1] = out_size[0];
+            out_size[2] = out_size[0];
+            break;
+        case PRIM_CYLINDER:
+        case PRIM_CONE:
+            out_size[0] = rand_float_range(0.6f, 1.2f);
+            out_size[1] = rand_float_range(0.8f, 2.2f);
+            out_size[2] = out_size[0];
+            break;
+        case PRIM_PYRAMID:
+            out_size[0] = rand_float_range(0.7f, 1.6f);
+            out_size[1] = rand_float_range(0.8f, 2.0f);
+            out_size[2] = rand_float_range(0.7f, 1.6f);
+            break;
+        case PRIM_CAPSULE:
+            out_size[0] = rand_float_range(0.6f, 1.1f);
+            out_size[1] = rand_float_range(1.6f, 2.8f);
+            out_size[2] = out_size[0];
+            break;
+        case PRIM_TORUS:
+            out_size[0] = rand_float_range(1.4f, 2.4f);
+            out_size[1] = rand_float_range(0.4f, 0.8f);
+            out_size[2] = out_size[0];
+            break;
+        default:
+            out_size[0] = 1.0f;
+            out_size[1] = 1.0f;
+            out_size[2] = 1.0f;
+            break;
+    }
+}
+
+static void respawn_obstacle(ObstacleInstance* obstacle, float player_z, float min_ahead, float max_ahead, float lane_min_x, float lane_max_x)
+{
+    if(!obstacle)
+        return;
+
+    float ahead                    = rand_float_range(min_ahead, max_ahead);
+    obstacle->instance.position[0] = rand_float_range(lane_min_x, lane_max_x);
+    obstacle->instance.position[1] = 0.0f;
+    obstacle->instance.position[2] = player_z - ahead;
+}
+
+static bool init_obstacles(uint32_t           count,
+                           float              player_z,
+                           float              min_ahead,
+                           float              max_ahead,
+                           float              lane_min_x,
+                           float              lane_max_x,
+                           ObstacleInstance** out_obstacles,
+                           uint32_t*          out_count)
+{
+    if(!out_obstacles || !out_count || count == 0)
+        return false;
+
+    ObstacleInstance* obstacles = (ObstacleInstance*)calloc(count, sizeof(ObstacleInstance));
+    if(!obstacles)
+        return false;
+
+    uint32_t created = 0;
+    float    spacing = (max_ahead - min_ahead) / (float)count;
+    for(uint32_t i = 0; i < count; ++i)
+    {
+        PrimitiveShape shape = random_obstacle_shape();
+        vec3           size  = {0.0f, 0.0f, 0.0f};
+        random_obstacle_size(shape, size);
+
+        Draw3DDesc desc        = {0};
+        desc.primitive         = shape;
+        desc.primitive_size[0] = size[0];
+        desc.primitive_size[1] = size[1];
+        desc.primitive_size[2] = size[2];
+        desc.position[0]       = rand_float_range(lane_min_x, lane_max_x);
+        desc.position[1]       = 0.0f;
+        desc.position[2]       = player_z - (min_ahead + spacing * (float)i + rand_float_range(0.0f, spacing));
+        desc.bloom_enabled     = false;
+        desc.bloom_color[0]    = 0.2f;
+        desc.bloom_color[1]    = 0.6f;
+        desc.bloom_color[2]    = 0.2f;
+        desc.animation_speed   = 1.0f;
+        desc.animation_paused  = true;
+
+        if(!draw_3d(&desc, &obstacles[created].instance))
+            continue;
+
+        obstacles[created].shape   = shape;
+        obstacles[created].size[0] = size[0];
+        obstacles[created].size[1] = size[1];
+        obstacles[created].size[2] = size[2];
+        obstacle_set_half_extents(&obstacles[created]);
+        ++created;
+    }
+
+    if(created == 0)
+    {
+        free(obstacles);
+        return false;
+    }
+
+    *out_obstacles = obstacles;
+    *out_count     = created;
+    return true;
+}
+
+static bool aabb_overlap(const vec3 a_pos, const vec3 a_half, const vec3 b_pos, const vec3 b_half)
+{
+    if(fabsf(a_pos[0] - b_pos[0]) > (a_half[0] + b_half[0]))
+        return false;
+    if(fabsf(a_pos[1] - b_pos[1]) > (a_half[1] + b_half[1]))
+        return false;
+    if(fabsf(a_pos[2] - b_pos[2]) > (a_half[2] + b_half[2]))
+        return false;
+    return true;
 }
 
 static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
@@ -1315,6 +1850,25 @@ static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
                 size[1] = 1.0f;
             size[2] = size[0];
         }
+        if(desc->primitive == PRIM_PYRAMID)
+        {
+            if(size[1] <= 0.0f)
+                size[1] = 1.0f;
+            if(size[2] <= 0.0f)
+                size[2] = size[0];
+        }
+        if(desc->primitive == PRIM_CAPSULE)
+        {
+            if(size[1] <= 0.0f)
+                size[1] = size[0] * 2.0f;
+            size[2] = size[0];
+        }
+        if(desc->primitive == PRIM_TORUS)
+        {
+            if(size[1] <= 0.0f)
+                size[1] = size[0] * 0.5f;
+            size[2] = size[0];
+        }
 
         GLTFContainer* primitive = create_primitive_container(desc->primitive, size);
         if(!primitive)
@@ -1331,9 +1885,14 @@ static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
             return false;
     }
 
-    out_instance->position[0]      = desc->position[0];
-    out_instance->position[1]      = desc->position[1];
-    out_instance->position[2]      = desc->position[2];
+    out_instance->position[0]   = desc->position[0];
+    out_instance->position[1]   = desc->position[1];
+    out_instance->position[2]   = desc->position[2];
+    out_instance->use_transform = desc->use_transform;
+    if(desc->use_transform)
+        memcpy(out_instance->xform.transform, desc->xform.transform, sizeof(out_instance->xform.transform));
+    else
+        glm_vec3_copy(desc->xform.rotation, out_instance->xform.rotation);
     out_instance->bloom_enabled    = desc->bloom_enabled;
     out_instance->bloom_color[0]   = desc->bloom_color[0];
     out_instance->bloom_color[1]   = desc->bloom_color[1];
@@ -1356,59 +1915,6 @@ static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
         out_instance->animation_paused = true;
     }
 
-    return true;
-}
-
-static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfSceneInstance** out_instances, uint32_t* out_loaded_count)
-{
-    *out_instances    = NULL;
-    *out_loaded_count = 0;
-
-    if(!glb_paths || glb_count == 0)
-        return false;
-
-    GltfSceneInstance* instances = (GltfSceneInstance*)calloc(glb_count, sizeof(GltfSceneInstance));
-    if(!instances)
-        return false;
-
-    uint32_t loaded_count = 0;
-    for(uint32_t i = 0; i < glb_count; ++i)
-    {
-        uint32_t col    = loaded_count % GRID_COLUMNS;
-        uint32_t row    = loaded_count / GRID_COLUMNS;
-        float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
-
-        Draw3DDesc desc       = {0};
-        desc.gltf_path        = glb_paths[i];
-        desc.position[0]      = (float)col * GRID_SPACING_X - 0.5f * grid_w;
-        desc.position[1]      = 0.0f;
-        desc.position[2]      = -(float)row * GRID_SPACING_Z;
-        desc.bloom_enabled    = false;
-        desc.bloom_color[0]   = 1.0f;
-        desc.bloom_color[1]   = 2.0f;
-        desc.bloom_color[2]   = 1.0f;
-        desc.animation_index  = 0;
-        desc.animation_time   = 0.0f;
-        desc.animation_speed  = 1.0f;
-        desc.animation_paused = false;
-        if(i < 4)
-        {
-            desc.bloom_enabled = true;
-        }
-        if(!draw_3d(&desc, &instances[loaded_count]))
-            continue;
-
-        ++loaded_count;
-    }
-
-    if(loaded_count == 0)
-    {
-        free(instances);
-        return false;
-    }
-
-    *out_instances    = instances;
-    *out_loaded_count = loaded_count;
     return true;
 }
 
@@ -1666,6 +2172,19 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
     mat4 instance_transform;
     glm_mat4_identity(instance_transform);
     glm_translate(instance_transform, instance->position);
+    if(instance->use_transform)
+    {
+        glm_mat4_mul(instance_transform, instance->xform.transform, instance_transform);
+    }
+    else
+    {
+        mat4 rot;
+        glm_mat4_identity(rot);
+        glm_rotate_x(rot, instance->xform.rotation[0], rot);
+        glm_rotate_y(rot, instance->xform.rotation[1], rot);
+        glm_rotate_z(rot, instance->xform.rotation[2], rot);
+        glm_mat4_mul(instance_transform, rot, instance_transform);
+    }
 
     for(uint32_t i = 0; i < model->cpu->mesh_count; ++i)
     {
@@ -1758,7 +2277,12 @@ static void draw_gltf_model(VkCommandBuffer cmd, const GltfGpuModel* model)
 
 int main(void)
 {
+    if(!fs_init(NULL, "save", ".."))
+        return 1;
+    atexit(fs_shutdown);
+
     graphics_init();
+    rand_seed((uint64_t)time(NULL));
 
     Camera cam = {0};
     camera_defaults_3d(&cam);
@@ -1774,38 +2298,78 @@ int main(void)
         return 1;
     }
 
-    GltfSceneInstance* instances    = NULL;
-    uint32_t           loaded_count = 0;
-    if(!build_scene_instances(glb_paths, glb_count, &instances, &loaded_count))
+    GltfSceneInstance player      = {0};
+    Draw3DDesc        player_desc = {0};
+    player_desc.gltf_path         = glb_paths[0];
+    player_desc.xform.rotation[0] = 0.0f;
+    player_desc.position[0]       = 0.0f;
+    player_desc.position[1]       = 0.0f;
+    player_desc.position[2]       = 0.0f;
+    player_desc.bloom_enabled     = false;
+    player_desc.bloom_color[0]    = 1.0f;
+    player_desc.bloom_color[1]    = 1.0f;
+    player_desc.bloom_color[2]    = 1.0f;
+    player_desc.animation_index   = 1;
+    player_desc.animation_time    = 1.0f;
+    player_desc.animation_speed   = 2.0f;
+
+    player_desc.animation_paused = false;
+    player_desc.use_transform    = true;
+    compose_transform_pos_rot(player_desc.position, (vec3){0.0f, glm_rad(180.0f), 0.0f}, player_desc.xform.transform);
+    if(!draw_3d(&player_desc, &player))
     {
         free_glb_paths(glb_paths, glb_count);
         renderer_destroy(&renderer);
         return 1;
     }
 
-    Input     input             = {0};
-    ActionMap actions           = {0};
-    double    prev_time_seconds = glfwGetTime();
-    float     player_vel_x      = 0.0f;
-    float     player_vel_z      = 0.0f;
-    float     player_speed      = 2.5f;
-    float     player_accel      = 10.0f;
-    float     player_friction   = 8.0f;
-    const char* player_idle_anim = "idle";
-    const char* player_move_anim = "walk";
+    const uint32_t obstacle_capacity   = 48;
+    const float    obstacle_spawn_min  = 12.0f;
+    const float    obstacle_spawn_max  = 70.0f;
+    const float    obstacle_lane_min_x = -6.0f;
+    const float    obstacle_lane_max_x = 6.0f;
+
+    ObstacleInstance* obstacles      = NULL;
+    uint32_t          obstacle_count = 0;
+    if(!init_obstacles(obstacle_capacity, player_desc.position[2], obstacle_spawn_min, obstacle_spawn_max,
+                       obstacle_lane_min_x, obstacle_lane_max_x, &obstacles, &obstacle_count))
+    {
+        gltf_gpu_model_destroy(&player.model);
+        free_glb_paths(glb_paths, glb_count);
+        renderer_destroy(&renderer);
+        return 1;
+    }
+
+    Input       input             = {0};
+    ActionMap   actions           = {0};
+    double      prev_time_seconds = glfwGetTime();
+    float       player_vel_x      = 0.0f;
+    float       player_vel_z      = 0.0f;
+    float       player_speed      = 3.5f;
+    float       player_max_speed  = 7.0f;
+    float       player_min_speed  = 1.5f;
+    float       player_strafe     = 5.0f;
+    const char* player_idle_anim  = "idle";
+    const char* player_move_anim  = "run";
+    bool        game_paused       = false;
+    vec3        player_pos        = {0.0f, 0.0f, 0.0f};
+    vec3        prev_player_pos   = {0.0f, 0.0f, 0.0f};
+    vec3        player_half       = {0.35f, 0.8f, 0.35f};
+    float       score_distance    = 0.0f;
 
     VmaBudget memory_budgets[VK_MAX_MEMORY_HEAPS] = {0};
-    uint32_t  memory_heap_count = renderer.info.memory.memoryHeapCount;
-    double    memory_budget_last_update = -1.0;
-    double    memory_budget_interval_s = 2.0;
-    bool      memory_window_open = true;
-    mu_multi_index avoidance_index = {0};
+    uint32_t  memory_heap_count                   = renderer.info.memory.memoryHeapCount;
+    double    memory_budget_last_update           = -1.0;
+    double    memory_budget_interval_s            = 2.0;
+    bool      memory_window_open                  = true;
 
     input_init(&input);
     input_attach(&input, renderer.window);
     input_actions_default(&actions);
-    mu_multi_index_init(&avoidance_index, 256, 256);
-
+    player.position[0]            = player_pos[0];
+    player.position[1]            = player_pos[1];
+    player.position[2]            = player_pos[2];
+    g_postfx_settings.dof_enabled = false;
     while(!glfwWindowShouldClose(renderer.window))
     {
         TracyCFrameMark;
@@ -1828,16 +2392,31 @@ int main(void)
             uint32_t    next_count = 0;
             if(collect_glb_paths(model_dir, &next_paths, &next_count))
             {
-                GltfSceneInstance* next_instances    = NULL;
-                uint32_t           next_loaded_count = 0;
-                if(build_scene_instances(next_paths, next_count, &next_instances, &next_loaded_count))
+                GltfSceneInstance next_player = {0};
+                Draw3DDesc        next_desc   = {0};
+                next_desc.gltf_path           = next_paths[0];
+                next_desc.position[0]         = player_pos[0];
+                next_desc.position[1]         = player_pos[1];
+                next_desc.position[2]         = player_pos[2];
+                next_desc.bloom_enabled       = false;
+                next_desc.bloom_color[0]      = 0.0f;
+                next_desc.bloom_color[1]      = 0.0f;
+                next_desc.bloom_color[2]      = 0.0f;
+                next_desc.animation_index     = 0;
+                next_desc.animation_time      = 0.0f;
+                next_desc.animation_speed     = 1.0f;
+                next_desc.animation_paused    = game_paused;
+
+                next_desc.use_transform = true;
+                compose_transform_pos_rot(next_desc.position, (vec3){0.0f, glm_rad(180.0f), 0.0f}, next_desc.xform.transform);
+
+                if(draw_3d(&next_desc, &next_player))
                 {
-                    destroy_scene_instances(instances, loaded_count);
+                    gltf_gpu_model_destroy(&player.model);
+                    player = next_player;
                     free_glb_paths(glb_paths, glb_count);
-                    instances    = next_instances;
-                    loaded_count = next_loaded_count;
-                    glb_paths    = next_paths;
-                    glb_count    = next_count;
+                    glb_paths = next_paths;
+                    glb_count = next_count;
                 }
                 else
                 {
@@ -1848,120 +2427,110 @@ int main(void)
 
         if(input_action_pressed(&input, &actions, ACTION_TOGGLE_PAUSE))
         {
-            bool pause_state = !instances[0].animation_paused;
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                instances[i].animation_paused = pause_state;
+            game_paused             = !game_paused;
+            player.animation_paused = game_paused;
         }
 
         if(input_action_pressed(&input, &actions, ACTION_RESET_ANIM))
         {
-            for(uint32_t i = 0; i < loaded_count; ++i)
-                instances[i].animation_time = 0.0f;
+            player.animation_time = 0.0f;
+            player_pos[0]         = 0.0f;
+            player_pos[2]         = 0.0f;
+            score_distance        = 0.0f;
+            for(uint32_t i = 0; i < obstacle_count; ++i)
+                respawn_obstacle(&obstacles[i], player_pos[2], obstacle_spawn_min, obstacle_spawn_max,
+                                 obstacle_lane_min_x, obstacle_lane_max_x);
         }
 
-        if(loaded_count > 0)
+        float move_x = 0.0f;
+        float move_z = 0.0f;
+        input_get_move_vector(&input, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, &move_x, &move_z);
+
+        prev_player_pos[0] = player_pos[0];
+        prev_player_pos[1] = player_pos[1];
+        prev_player_pos[2] = player_pos[2];
+
+        if(!game_paused)
         {
-            const float runner_min_z   = -25.0f;
-            const float runner_max_z   = 25.0f;
-            const float runner_min_x   = -10.0f;
-            const float runner_max_x   = 10.0f;
-            const float runner_speed_a = 2.0f;
-            const float runner_speed_b = 3.5f;
-            const float avoid_radius   = 1.25f;
-            const float avoid_strength = 2.0f;
-            const float side_max       = 2.0f;
-            const float edge_push      = 3.0f;
-            const char* runner_anim    = "run";
-            const float avoid_radius_sq = avoid_radius * avoid_radius;
-            const float avoid_cell_size = avoid_radius;
-            const float inv_cell_size   = avoid_cell_size > 0.0f ? (1.0f / avoid_cell_size) : 1.0f;
-            const int   cell_range      = (int)ceilf(avoid_radius * inv_cell_size);
+            float target_speed = player_speed + move_z * 2.5f;
+            if(target_speed < player_min_speed)
+                target_speed = player_min_speed;
+            if(target_speed > player_max_speed)
+                target_speed = player_max_speed;
 
-            mu_multi_index_reset(&avoidance_index);
+            player_vel_x = move_x * player_strafe;
+            player_vel_z = -target_speed;
 
-            for(uint32_t i = 0; i < loaded_count; ++i)
+            player_pos[0] += player_vel_x * frame_delta_seconds;
+            player_pos[2] += player_vel_z * frame_delta_seconds;
+
+            if(player_pos[0] < obstacle_lane_min_x)
+                player_pos[0] = obstacle_lane_min_x;
+            else if(player_pos[0] > obstacle_lane_max_x)
+                player_pos[0] = obstacle_lane_max_x;
+
+            score_distance = -player_pos[2];
+        }
+
+        if(player.model.cpu && player.model.cpu->animation_count > 0 && !player.animation_paused)
+        {
+            bool        moving     = fabsf(player_vel_x) > 0.01f || fabsf(player_vel_z) > 0.01f;
+            const char* anim       = moving ? player_move_anim : player_idle_anim;
+            uint32_t    anim_index = find_animation_by_name(&player, anim, 0);
+            if(player.animation_index != anim_index)
+                player.animation_time = 0.0f;
+            player.animation_index = anim_index;
+            player.animation_speed = 1.0f;
+        }
+
+        bool        hit_obstacle            = false;
+        const float obstacle_despawn_behind = 6.0f;
+
+        for(uint32_t i = 0; i < obstacle_count; ++i)
+        {
+            ObstacleInstance* obs = &obstacles[i];
+            if(!game_paused)
             {
-                int32_t cell_x = (int32_t)floorf(instances[i].position[0] * inv_cell_size);
-                int32_t cell_z = (int32_t)floorf(instances[i].position[2] * inv_cell_size);
-                uint64_t key   = pack_cell_key_i32(cell_x, cell_z);
-                mu_multi_index_add(&avoidance_index, key, i);
+                if(obs->instance.position[2] - player_pos[2] > obstacle_despawn_behind)
+                    respawn_obstacle(obs, player_pos[2], obstacle_spawn_min, obstacle_spawn_max, obstacle_lane_min_x, obstacle_lane_max_x);
             }
 
-            for(uint32_t i = 0; i < loaded_count; ++i)
+            vec3 expanded_half = {
+                obs->half_extents[0] + player_half[0],
+                obs->half_extents[1] + player_half[1],
+                obs->half_extents[2] + player_half[2],
+            };
+
+            if(segment_aabb_intersect(prev_player_pos, player_pos, obs->instance.position, expanded_half))
             {
-                float t = (float)(i % 7u) / 6.0f;
-                float speed = runner_speed_a + (runner_speed_b - runner_speed_a) * t;
-
-                float avoid_x = 0.0f;
-                float avoid_z = 0.0f;
-
-                int32_t cell_x = (int32_t)floorf(instances[i].position[0] * inv_cell_size);
-                int32_t cell_z = (int32_t)floorf(instances[i].position[2] * inv_cell_size);
-
-                for(int dz = -cell_range; dz <= cell_range; ++dz)
-                {
-                    for(int dx = -cell_range; dx <= cell_range; ++dx)
-                    {
-                        uint64_t key = pack_cell_key_i32(cell_x + dx, cell_z + dz);
-                        uint32_t start = mu_multi_index_first(&avoidance_index, key);
-                        for(uint32_t node = start; node != MU_MULTI_INDEX_NONE; node = mu_multi_index_next(&avoidance_index, start, node))
-                        {
-                            uint32_t j = mu_multi_index_value(&avoidance_index, node);
-                            if(i == j)
-                                continue;
-
-                            float dxp = instances[i].position[0] - instances[j].position[0];
-                            float dzp = instances[i].position[2] - instances[j].position[2];
-                            float dist_sq = dxp * dxp + dzp * dzp;
-                            if(dist_sq > 0.0001f && dist_sq < avoid_radius_sq)
-                            {
-                                float inv = 1.0f / dist_sq;
-                                avoid_x += dxp * inv;
-                                avoid_z += dzp * inv;
-                            }
-                        }
-                    }
-                }
-
-                if(instances[i].position[0] < runner_min_x + 1.0f)
-                    avoid_x += (runner_min_x + 1.0f - instances[i].position[0]) * edge_push;
-                if(instances[i].position[0] > runner_max_x - 1.0f)
-                    avoid_x -= (instances[i].position[0] - (runner_max_x - 1.0f)) * edge_push;
-
-                float side_vel = avoid_x * avoid_strength;
-                if(side_vel > side_max)
-                    side_vel = side_max;
-                else if(side_vel < -side_max)
-                    side_vel = -side_max;
-
-                instances[i].position[0] += side_vel * frame_delta_seconds;
-                instances[i].position[2] += speed * frame_delta_seconds;
-                if(instances[i].position[2] > runner_max_z)
-                    instances[i].position[2] = runner_min_z;
-
-                if(instances[i].position[0] < runner_min_x)
-                    instances[i].position[0] = runner_min_x;
-                else if(instances[i].position[0] > runner_max_x)
-                    instances[i].position[0] = runner_max_x;
-
-                instances[i].position[1] = 0.0f;
-
-                if(instances[i].model.cpu && instances[i].model.cpu->animation_count > 0 && !instances[i].animation_paused)
-                {
-                    uint32_t run_index = find_animation_by_name(&instances[i], runner_anim, 0);
-                    if(instances[i].animation_index != run_index)
-                        instances[i].animation_time = 0.0f;
-                    instances[i].animation_index = run_index;
-                    instances[i].animation_speed = 1.0f;
-                }
+                hit_obstacle = true;
+                break;
             }
         }
 
-        for(uint32_t i = 0; i < loaded_count; ++i)
-            update_animation_time(&instances[i], frame_delta_seconds);
+        if(hit_obstacle)
+        {
+            player_pos[0]         = 0.0f;
+            player_pos[2]         = 0.0f;
+            score_distance        = 0.0f;
+            player.animation_time = 0.0f;
+            for(uint32_t i = 0; i < obstacle_count; ++i)
+                respawn_obstacle(&obstacles[i], player_pos[2], obstacle_spawn_min, obstacle_spawn_max,
+                                 obstacle_lane_min_x, obstacle_lane_max_x);
+        }
+
+        player.position[0] = player_pos[0];
+        player.position[1] = player_pos[1];
+        player.position[2] = player_pos[2];
+
+        update_animation_time(&player, frame_delta_seconds);
+
+        camera3d_set_position(&cam, player_pos[0], player_pos[1] + 1.2f, player_pos[2] + 4.5f);
+        camera3d_set_rotation_yaw_pitch(&cam, 0.0f, -0.08f);
 
         pipeline_rebuild(&renderer);
         frame_start(&renderer, &cam);
+
 
         VkCommandBuffer cmd        = renderer.frames[renderer.current_frame].cmdbuf;
         GpuProfiler*    frame_prof = &renderer.gpuprofiler[renderer.current_frame];
@@ -1990,11 +2559,15 @@ int main(void)
                 flush_barriers(cmd);
             }
 
-            for(uint32_t i = 0; i < loaded_count; ++i)
+            gltf_gpu_model_upload_once(&player.model, cmd);
+            gltf_gpu_model_update_skinning(&player, cmd);
+            gltf_gpu_model_update_draw_data(&player, cmd);
+
+            for(uint32_t i = 0; i < obstacle_count; ++i)
             {
-                gltf_gpu_model_upload_once(&instances[i].model, cmd);
-                gltf_gpu_model_update_skinning(&instances[i], cmd);
-                gltf_gpu_model_update_draw_data(&instances[i], cmd);
+                gltf_gpu_model_upload_once(&obstacles[i].instance.model, cmd);
+                gltf_gpu_model_update_skinning(&obstacles[i].instance, cmd);
+                gltf_gpu_model_update_draw_data(&obstacles[i].instance, cmd);
             }
 
             VkRenderingAttachmentInfo color = {
@@ -2041,8 +2614,9 @@ int main(void)
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_render_pipelines.pipelines[pipelines.ground]);
                 vk_cmd_set_viewport_scissor(cmd, renderer.swapchain.extent);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
-                for(uint32_t i = 0; i < loaded_count; ++i)
-                    draw_gltf_model(cmd, &instances[i].model);
+                draw_gltf_model(cmd, &player.model);
+                for(uint32_t i = 0; i < obstacle_count; ++i)
+                    draw_gltf_model(cmd, &obstacles[i].instance.model);
                 vkCmdEndRendering(cmd);
             }
 
@@ -2066,6 +2640,8 @@ int main(void)
                 igText("CPU active: %.3f ms", cpu_active_ms);
                 igText("CPU wait: %.3f ms", cpu_wait_ms);
                 igText("FPS: %.1f", cpu_frame_ms > 0.0 ? 1000.0 / cpu_frame_ms : 0.0);
+                igText("Score (distance): %.1f", score_distance);
+                igText("Speed: %.2f", fabsf(player_vel_z));
 
                 igSeparator();
                 igSeparator();
@@ -2100,7 +2676,7 @@ int main(void)
                 igSeparator();
                 igText("Post FX");
 
-                bool dof_enabled = g_postfx_settings.dof_enabled != 0u;
+                bool dof_enabled = g_postfx_settings.dof_enabled != 0;
                 if(igCheckbox("DoF Enabled", &dof_enabled))
                     g_postfx_settings.dof_enabled = dof_enabled ? 1u : 0u;
 
@@ -2125,10 +2701,10 @@ int main(void)
                             memory_budget_last_update = now_seconds;
                         }
 
-                        VkDeviceSize total_usage = 0;
-                        VkDeviceSize total_budget = 0;
+                        VkDeviceSize total_usage       = 0;
+                        VkDeviceSize total_budget      = 0;
                         VkDeviceSize total_alloc_bytes = 0;
-                        uint32_t total_alloc_count = 0;
+                        uint32_t     total_alloc_count = 0;
 
                         for(uint32_t i = 0; i < memory_heap_count; ++i)
                         {
@@ -2144,8 +2720,8 @@ int main(void)
 
                         for(uint32_t i = 0; i < memory_heap_count; ++i)
                         {
-                            VmaBudget* b = &memory_budgets[i];
-                            double percent_used = 0.0;
+                            VmaBudget* b            = &memory_budgets[i];
+                            double     percent_used = 0.0;
                             if(b->budget > 0)
                                 percent_used = (double)b->usage * 100.0 / (double)b->budget;
                             igText("Heap %u", i);
@@ -2153,8 +2729,7 @@ int main(void)
                                    bytes_to_mib(b->budget), percent_used);
                             igText("  alloc %.2f MiB, allocs %u", bytes_to_mib(b->statistics.allocationBytes),
                                    b->statistics.allocationCount);
-                            igText("  blocks %.2f MiB, blocks %u", bytes_to_mib(b->statistics.blockBytes),
-                                   b->statistics.blockCount);
+                            igText("  blocks %.2f MiB, blocks %u", bytes_to_mib(b->statistics.blockBytes), b->statistics.blockCount);
                         }
                     }
                 }
@@ -2189,8 +2764,8 @@ int main(void)
         }
     }
 
-    mu_multi_index_deinit(&avoidance_index);
-    destroy_scene_instances(instances, loaded_count);
+    destroy_obstacles(obstacles, obstacle_count);
+    gltf_gpu_model_destroy(&player.model);
     free_glb_paths(glb_paths, glb_count);
 
     renderer_destroy(&renderer);

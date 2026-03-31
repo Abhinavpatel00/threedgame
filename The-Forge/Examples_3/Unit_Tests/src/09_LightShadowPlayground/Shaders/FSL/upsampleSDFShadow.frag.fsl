@@ -1,0 +1,131 @@
+/*
+* Copyright (c) 2017-2025 The Forge Interactive Inc.
+*
+* This file is part of The-Forge
+* (see https://github.com/ConfettiFX/The-Forge).
+*
+* Licensed to the Apache Software Foundation (ASF) under one
+* or more contributor license agreements.  See the NOTICE file
+* distributed with this work for additional information
+* regarding copyright ownership.  The ASF licenses this file
+* to you under the Apache License, Version 2.0 (the
+* "License"); you may not use this file except in compliance
+* with the License.  You may obtain a copy of the License at
+*
+*   http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing,
+* software distributed under the License is distributed on an
+* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+* KIND, either express or implied.  See the License for the
+* specific language governing permissions and limitations
+* under the License.
+*/
+
+#ifndef SAMPLE_COUNT
+#define SAMPLE_COUNT 4
+#endif
+
+#include "SDFConstants.h.fsl"
+#include "VisibilityBufferResources.h.fsl"
+#include "Global.srt.h"
+
+
+
+
+STRUCT(PsIn)
+{
+	DATA(float4, Position, SV_Position);
+	DATA(float2, TexCoord, TEXCOORD0);
+#if FT_MULTIVIEW
+    DATA(FLAT(uint), ViewID, TEXCOORD3);
+#endif
+};
+
+STRUCT(PsOut)
+{
+	DATA(float, FinalColor, SV_Target0);
+};
+
+float ConvertFromDeviceZ(float deviceZ)
+{
+	const float4 deviceZToWorldZ = gCameraUniformBlock.mDeviceZToWorldZ;
+	return deviceZ * deviceZToWorldZ.x + deviceZToWorldZ.y + 1.0f / (deviceZ * deviceZToWorldZ.z - deviceZToWorldZ.w);
+}
+
+ROOT_SIGNATURE(DefaultRootSignature)
+PsOut PS_MAIN( PsIn In, SV_SampleIndex(uint) i )
+{
+	INIT_MAIN;
+	PsOut Out;
+	float2 UV = In.TexCoord.xy;
+#if SAMPLE_COUNT > 1
+#if FT_MULTIVIEW
+	float depthVal = LoadTex2DArrayMS(gDepthTextureUpSample, gSamplerPointClamp, uint3(In.Position.xy, In.ViewID), i).r;
+#else
+	float depthVal = LoadTex2DMS(gDepthTextureUpSample, gSamplerPointClamp, uint2(In.Position.xy), i).r;
+#endif
+#else
+#if FT_MULTIVIEW
+	float depthVal = SampleTex2DArray(gDepthTextureUpSample, gSamplerPointClamp, uint3(UV, In.ViewID)).r;
+#else
+	float depthVal = SampleTex2D(gDepthTextureUpSample, gSamplerPointClamp, UV).r;
+#endif/*FT_MULTIVIEW*/
+#endif
+	float worldDepth = ConvertFromDeviceZ(depthVal);
+	
+	float2 downSampledTextureSize = floor(gCameraUniformBlock.mWindowSize.xy / SDF_SHADOW_DOWNSAMPLE_VALUE);
+	float2 downSampledTexelSize = 1.0f / downSampledTextureSize.xy;
+
+	//get the top left corner of this UV coord
+	float2 cornerUV = floor(UV.xy * downSampledTextureSize - 0.5f) / 
+		downSampledTextureSize.xy + 0.5f * downSampledTexelSize;
+	
+	float2 billinearWeights = (UV.xy - cornerUV.xy) * downSampledTextureSize;
+
+#if FT_MULTIVIEW
+	float2 textureValues_00 = SampleTex2DArray(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, float3(cornerUV, In.ViewID)).xy;
+	float2 textureValues_10 = SampleTex2DArray(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, float3(cornerUV + float2(downSampledTexelSize.x, 0.f), In.ViewID)).xy;
+	float2 textureValues_01 = SampleTex2DArray(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, float3(cornerUV + float2(0.f, downSampledTexelSize.y), In.ViewID)).xy;
+	float2 textureValues_11 = SampleTex2DArray(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, float3(cornerUV + downSampledTexelSize, In.ViewID)).xy;
+#else
+	float2 textureValues_00 = SampleTex2D(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, cornerUV).xy;
+	float2 textureValues_10 = SampleTex2D(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, cornerUV + float2(downSampledTexelSize.x, 0.f)).xy;
+	float2 textureValues_01 = SampleTex2D(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, cornerUV + float2(0.f, downSampledTexelSize.y)).xy;
+	float2 textureValues_11 = SampleTex2D(gSDFShadowTexture, 
+		gClampMiplessLinearSampler, cornerUV + downSampledTexelSize).xy;
+#endif
+
+	float4 cornerWeights = float4(  ( (1.f - billinearWeights.y) * (1.f - billinearWeights.x) ),
+		(1.f - billinearWeights.y) * billinearWeights.x,
+		(1.f - billinearWeights.x) * billinearWeights.y,
+		(billinearWeights.x * billinearWeights.y) 
+	);
+
+	float epilson = pow(10.f, -4.f);
+
+	float4 cornerDepths = abs(float4(textureValues_00.y, 
+		textureValues_10.y, textureValues_01.y, textureValues_11.y));
+
+	float4 depthWeights = 1.0f / ((abs(cornerDepths - f4(worldDepth)) + epilson));
+	float4 finalWeights = cornerWeights * depthWeights;
+
+	float interpolatedResult = (
+		finalWeights.x * textureValues_00.x + 
+		finalWeights.y * textureValues_10.x + 
+		finalWeights.z * textureValues_01.x + 
+		finalWeights.w * textureValues_11.x);
+
+	interpolatedResult /= dot(finalWeights, f4(1));
+	
+	Out.FinalColor = interpolatedResult;
+
+	RETURN(Out);
+}
