@@ -42,7 +42,9 @@ PUSH_CONSTANT(BloomDownPush,
               uint32_t width;
               uint32_t height;
               float    threshold;
-              float    threshold_knee;);
+              float    threshold_knee;
+              float    src_texel_x;
+              float    src_texel_y;);
 
 PUSH_CONSTANT(BloomUpPush,
               uint32_t src_texture_id;
@@ -52,7 +54,9 @@ PUSH_CONSTANT(BloomUpPush,
               uint32_t width;
               uint32_t height;
               float    radius;
-              float    pad0;);
+              float    pad0;
+              float    src_texel_x;
+              float    src_texel_y;);
 PUSH_CONSTANT(EdgePush, uint32_t texture_id; uint32_t sampler_id;);
 
 
@@ -160,16 +164,19 @@ static void pass_bloom(uint32_t current_image)
         for(uint32_t mip = 1; mip < BLOOM_MIPS; ++mip)
         {
             RenderTarget* dst = &renderer.bloom_chain[current_image][mip];
+            RenderTarget* src = (mip == 1) ? &renderer.hdr_color[current_image] : &renderer.bloom_chain[current_image][mip - 1];
 
             BloomDownPush push  = {0};
-            push.src_texture_id = renderer.bloom_chain[current_image][mip - 1].bindless_index;
+            push.src_texture_id = src->bindless_index;
             push.output_image_id = dst->bindless_index;
             push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
-            push.first_pass      = 0u;
+            push.first_pass      = (mip == 1) ? 1u : 0u;
             push.width           = dst->width;
             push.height          = dst->height;
             push.threshold       = bloom_threshold;
             push.threshold_knee  = bloom_knee;
+            push.src_texel_x     = 1.0f / (float)MAX(src->width, 1u);
+            push.src_texel_y     = 1.0f / (float)MAX(src->height, 1u);
 
             vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(BloomDownPush), &push);
 
@@ -189,7 +196,7 @@ static void pass_bloom(uint32_t current_image)
             RenderTarget* dst = &renderer.bloom_chain[current_image][mip - 1];
 
             rt_transition_all(cmd, dst, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
             rt_transition_all(cmd, src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                               VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             flush_barriers(cmd);
@@ -202,6 +209,8 @@ static void pass_bloom(uint32_t current_image)
             push.width           = dst->width;
             push.height          = dst->height;
             push.radius          = 1.0f;
+            push.src_texel_x     = 1.0f / (float)MAX(src->width, 1u);
+            push.src_texel_y     = 1.0f / (float)MAX(src->height, 1u);
 
             vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(BloomUpPush), &push);
 

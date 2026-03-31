@@ -1,3 +1,5 @@
+#include "common_bindless.slang"
+
 struct BloomDownPush
 {
     uint src_texture_id;
@@ -9,19 +11,12 @@ struct BloomDownPush
     uint height;
     float threshold;
     float threshold_knee;
+    float src_texel_x;
+    float src_texel_y;
 };
 
 [[vk::push_constant]]
 BloomDownPush push;
-
-[[vk::binding(0, 0)]]
-Texture2D textures[];
-
-[[vk::binding(1, 0)]]
-SamplerState samplers[];
-
-[[vk::binding(2, 0)]]
-RWTexture2D<float4> storage_images[];
 
 float3 soft_threshold(float3 color, float threshold, float knee)
 {
@@ -32,13 +27,8 @@ float3 soft_threshold(float3 color, float threshold, float knee)
     return color * contrib;
 }
 
-float3 sample_input_13_tap(Texture2D src, SamplerState s, float2 uv)
+float3 sample_input_13_tap(Texture2D src, SamplerState s, float2 uv, float2 texel)
 {
-    uint src_w = 1;
-    uint src_h = 1;
-    src.GetDimensions(src_w, src_h);
-    float2 texel = 1.0f / float2(src_w, src_h);
-
     float3 a = src.SampleLevel(s, uv + texel * float2(-2.0f,  2.0f), 0.0f).rgb;
     float3 b = src.SampleLevel(s, uv + texel * float2( 0.0f,  2.0f), 0.0f).rgb;
     float3 c = src.SampleLevel(s, uv + texel * float2( 2.0f,  2.0f), 0.0f).rgb;
@@ -59,6 +49,16 @@ float3 sample_input_13_tap(Texture2D src, SamplerState s, float2 uv)
     return sample;
 }
 
+float3 sample_input_4_tap(Texture2D src, SamplerState s, float2 uv, float2 texel)
+{
+    float2 half_t = texel * 0.5f;
+    float3 a = src.SampleLevel(s, uv + float2(-half_t.x, -half_t.y), 0.0f).rgb;
+    float3 b = src.SampleLevel(s, uv + float2( half_t.x, -half_t.y), 0.0f).rgb;
+    float3 c = src.SampleLevel(s, uv + float2(-half_t.x,  half_t.y), 0.0f).rgb;
+    float3 d = src.SampleLevel(s, uv + float2( half_t.x,  half_t.y), 0.0f).rgb;
+    return (a + b + c + d) * 0.25f;
+}
+
 [numthreads(16, 16, 1)]
 void cs_main(uint3 id : SV_DispatchThreadID)
 {
@@ -69,10 +69,15 @@ void cs_main(uint3 id : SV_DispatchThreadID)
 
     Texture2D           src = textures[push.src_texture_id];
     RWTexture2D<float4> dst = storage_images[push.output_image_id];
+    float2              texel = float2(max(push.src_texel_x, 1e-6f), max(push.src_texel_y, 1e-6f));
 
     float2 uv = (float2(pix) + 0.5f) / float2(push.width, push.height);
 
-    float3 color = sample_input_13_tap(src, samplers[push.sampler_id], uv);
+    float3 color;
+    if(push.first_pass != 0)
+        color = sample_input_13_tap(src, samplers[push.sampler_id], uv, texel);
+    else
+        color = sample_input_4_tap(src, samplers[push.sampler_id], uv, texel);
 
     if(push.first_pass != 0)
     {

@@ -17,8 +17,7 @@
 #define GRID_SPACING_Z 2.6f
 static bool take_screenshot;
 
-PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;
-              );
+PUSH_CONSTANT(GltfUberPush, VkDeviceAddress draw_data_ptr; VkDeviceAddress skin_mats_ptr; VkDeviceAddress mat_ptr; uint64_t _pad0;);
 
 typedef struct GltfIndirectDrawData
 {
@@ -711,16 +710,16 @@ static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
     if(!gltf_gpu_model_init(&out_instance->model, desc->gltf_path))
         return false;
 
-    out_instance->position[0] = desc->position[0];
-    out_instance->position[1] = desc->position[1];
-    out_instance->position[2] = desc->position[2];
-    out_instance->bloom_enabled   = desc->bloom_enabled;
-    out_instance->bloom_color[0]  = desc->bloom_color[0];
-    out_instance->bloom_color[1]  = desc->bloom_color[1];
-    out_instance->bloom_color[2]  = desc->bloom_color[2];
-    out_instance->animation_index = desc->animation_index;
-    out_instance->animation_time  = desc->animation_time;
-    out_instance->animation_speed = desc->animation_speed;
+    out_instance->position[0]      = desc->position[0];
+    out_instance->position[1]      = desc->position[1];
+    out_instance->position[2]      = desc->position[2];
+    out_instance->bloom_enabled    = desc->bloom_enabled;
+    out_instance->bloom_color[0]   = desc->bloom_color[0];
+    out_instance->bloom_color[1]   = desc->bloom_color[1];
+    out_instance->bloom_color[2]   = desc->bloom_color[2];
+    out_instance->animation_index  = desc->animation_index;
+    out_instance->animation_time   = desc->animation_time;
+    out_instance->animation_speed  = desc->animation_speed;
     out_instance->animation_paused = desc->animation_paused;
 
     if(out_instance->model.cpu && out_instance->model.cpu->animation_count > 0)
@@ -730,9 +729,9 @@ static bool draw_3d(const Draw3DDesc* desc, GltfSceneInstance* out_instance)
     }
     else
     {
-        out_instance->animation_index = 0;
-        out_instance->animation_time  = 0.0f;
-        out_instance->animation_speed = 1.0f;
+        out_instance->animation_index  = 0;
+        out_instance->animation_time   = 0.0f;
+        out_instance->animation_speed  = 1.0f;
         out_instance->animation_paused = true;
     }
 
@@ -758,20 +757,23 @@ static bool build_scene_instances(char** glb_paths, uint32_t glb_count, GltfScen
         uint32_t row    = loaded_count / GRID_COLUMNS;
         float    grid_w = (float)(GRID_COLUMNS - 1u) * GRID_SPACING_X;
 
-        Draw3DDesc desc = {0};
+        Draw3DDesc desc       = {0};
         desc.gltf_path        = glb_paths[i];
         desc.position[0]      = (float)col * GRID_SPACING_X - 0.5f * grid_w;
         desc.position[1]      = 0.0f;
         desc.position[2]      = -(float)row * GRID_SPACING_Z;
         desc.bloom_enabled    = false;
         desc.bloom_color[0]   = 1.0f;
-        desc.bloom_color[1]   = 1.0f;
+        desc.bloom_color[1]   = 2.0f;
         desc.bloom_color[2]   = 1.0f;
         desc.animation_index  = 0;
         desc.animation_time   = 0.0f;
         desc.animation_speed  = 1.0f;
         desc.animation_paused = false;
-
+        if(i < 4)
+        {
+            desc.bloom_enabled = true;
+        }
         if(!draw_3d(&desc, &instances[loaded_count]))
             continue;
 
@@ -1057,13 +1059,13 @@ static void gltf_gpu_model_update_draw_data(GltfSceneInstance* instance, VkComma
         draw->material_id = 0;
         draw->skin_offset = 0;
 
-        draw->flags    = 0;
+        draw->flags = 0;
         if(instance->bloom_enabled)
             draw->flags |= 0x8u;
         draw->bloom_color[0] = instance->bloom_color[0];
         draw->bloom_color[1] = instance->bloom_color[1];
         draw->bloom_color[2] = instance->bloom_color[2];
-        u32 node_index = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
+        u32 node_index       = model->cpu->mesh_node_indices ? model->cpu->mesh_node_indices[i] : UINT_MAX;
         if(node_index != UINT_MAX && node_index < model->cpu->node_count)
             glm_mat4_mul(instance_transform, model->node_world_matrices[node_index], draw->model);
         else
@@ -1192,9 +1194,9 @@ int main(void)
 
         if((key_m && !prev_m) || (key_k && !prev_k))
         {
-            const char* model_dir = key_m ? PETS_DIR : BLOCKY_DIR;
-            char**   next_paths = NULL;
-            uint32_t next_count = 0;
+            const char* model_dir  = key_m ? PETS_DIR : BLOCKY_DIR;
+            char**      next_paths = NULL;
+            uint32_t    next_count = 0;
             if(collect_glb_paths(model_dir, &next_paths, &next_count))
             {
                 GltfSceneInstance* next_instances    = NULL;
@@ -1286,8 +1288,7 @@ int main(void)
                 rt_transition_all(cmd, &renderer.hdr_color[renderer.swapchain.current_image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-                rt_transition_all(cmd, &renderer.bloom_chain[renderer.swapchain.current_image][0],
-                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                rt_transition_all(cmd, &renderer.bloom_chain[renderer.swapchain.current_image][0], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
                 image_transition_swapchain(cmd, &renderer.swapchain, VK_IMAGE_LAYOUT_GENERAL,
