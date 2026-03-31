@@ -164,7 +164,7 @@ void            post_pass()
         pp_push.depth_texture_id = renderer.depth[current_image].bindless_index;
         pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
         pp_push.bloom_texture_id = renderer.bloom_chain[current_image][0].bindless_index;
-        pp_push.bloom_intensity  = 0.12f;
+        pp_push.bloom_intensity  = 0.66f;
         pp_push.width           = renderer.swapchain.extent.width;
         pp_push.height          = renderer.swapchain.extent.height;
         pp_push.frame           = pp_frame_counter++;
