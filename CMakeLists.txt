@@ -23,6 +23,9 @@ FetchContent_MakeAvailable(glfw)
 find_package(Vulkan REQUIRED)
 
 file(GLOB MESHOPT_SOURCES CONFIGURE_DEPENDS external/meshoptimizer/src/*.cpp)
+file(GLOB SOLOUD_CORE_SOURCES CONFIGURE_DEPENDS external/soloud/src/core/*.cpp)
+file(GLOB SOLOUD_FILTER_SOURCES CONFIGURE_DEPENDS external/soloud/src/filter/*.cpp)
+file(GLOB SOLOUD_WAV_SOURCES CONFIGURE_DEPENDS external/soloud/src/audiosource/wav/*.cpp)
 
 set(SRC_C
     main.c
@@ -36,9 +39,11 @@ set(SRC_C
     text_system.c
     gltfloader.c
     input.c
+    external/soloud/src/audiosource/wav/stb_vorbis.c
 )
 
 set(SRC_CPP
+    audio.cpp
     vma.cpp
     external/cimgui/cimgui.cpp
     external/cimgui/cimgui_impl.cpp
@@ -51,6 +56,10 @@ set(SRC_CPP
     external/cimgui/imgui/backends/imgui_impl_vulkan.cpp
     external/tracy/public/TracyClient.cpp
     ${MESHOPT_SOURCES}
+    ${SOLOUD_CORE_SOURCES}
+    ${SOLOUD_FILTER_SOURCES}
+    ${SOLOUD_WAV_SOURCES}
+    external/soloud/src/backend/miniaudio/soloud_miniaudio.cpp
 )
 
 add_executable(threedgame ${SRC_C} ${SRC_CPP})
@@ -59,12 +68,14 @@ target_include_directories(threedgame PRIVATE
     external/cimgui
     external/cimgui/imgui
     external/cimgui/imgui/backends
+    external/soloud/include
 )
 
 target_compile_definitions(threedgame PRIVATE
     IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     IMGUI_IMPL_API=extern\ \"C\"
     TRACY_ENABLE
+    WITH_MINIAUDIO
 )
 
 if(MSVC)

@@ -1414,6 +1414,16 @@ void renderer_create(Renderer* r, RendererDesc* desc)
                                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                    .mip_count  = 1,
                                    .debug_name = "hdr_color"};
+    RenderTargetSpec fogged_hdr_spec = {
+        .width      = r->swapchain.extent.width,
+        .height     = r->swapchain.extent.height,
+        .layers     = 1,
+        .format     = hdr_format,
+        .usage      = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect     = VK_IMAGE_ASPECT_COLOR_BIT,
+        .mip_count  = 1,
+        .debug_name = "fogged_hdr",
+    };
     RenderTargetSpec dof_half_spec = {
         .width      = MAX(1u, r->swapchain.extent.width / 2),
         .height     = MAX(1u, r->swapchain.extent.height / 2),
@@ -1655,6 +1665,7 @@ void renderer_create(Renderer* r, RendererDesc* desc)
     {
         rt_create(r, &r->depth[i], &depth_spec);
         rt_create(r, &r->hdr_color[i], &hdr_spec);
+        rt_create(r, &r->fogged_hdr[i], &fogged_hdr_spec);
         rt_create(r, &r->dof_half[i], &dof_half_spec);
         rt_create(r, &r->ldr_color[i], &ldr_spec);
         rt_create(r, &r->bloom_chain[i], &bloom_spec);

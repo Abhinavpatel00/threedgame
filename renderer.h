@@ -8,6 +8,7 @@ typedef struct
 {
     uint32_t fullscreen;
     uint32_t toon_outline;
+    uint32_t analytic_fog;
     uint32_t dof_prepare;
     uint32_t postprocess;
     uint32_t bloom_downsample;

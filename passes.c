@@ -71,11 +71,30 @@ PUSH_CONSTANT(ToonOutlinePush,
               float    depth_threshold;
               float    edge_strength;);
 
+PUSH_CONSTANT(AnalyticFogPush,
+              uint32_t src_texture_id;
+              uint32_t depth_texture_id;
+              uint32_t output_image_id;
+              uint32_t sampler_id;
+              uint32_t width;
+              uint32_t height;
+              uint32_t fog_enabled;
+              uint32_t pad0;
+              float    density_scale;
+              float    fog_radius;
+              float    noise_amount;
+              float    pad1;
+              float    fog_color[3];
+              float    pad2;
+              float    fog_center[3];
+              float    pad3;);
+
 
 static uint32_t pp_frame_counter = 0;
 
 PostFxSettings g_postfx_settings = {
     .dof_enabled       = 1u,
+    .fog_enabled       = 1u,
     .exposure          = 1.2f,
     .bloom_intensity   = 0.66f,
     .dof_focus_point   = 16.0f,
@@ -83,6 +102,11 @@ PostFxSettings g_postfx_settings = {
     .dof_far_plane     = 300.0f,
     .dof_max_blur_size = 20.0f,
     .dof_rad_scale     = 0.5f,
+    .fog_density       = 1.15f,
+    .fog_radius        = 18.0f,
+    .fog_noise         = 0.05f,
+    .fog_color         = {0.71f, 0.78f, 0.87f},
+    .fog_center        = {0.0f, 1.8f, -6.0f},
 };
 
 void pass_toon_outline()
@@ -133,6 +157,51 @@ void pass_toon_outline()
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
         vkCmdEndRendering(cmd);
+    }
+}
+
+void pass_analytic_fog()
+{
+    VkCommandBuffer cmd          = renderer.frames[renderer.current_frame].cmdbuf;
+    GpuProfiler*    frame_prof   = &renderer.gpuprofiler[renderer.current_frame];
+    uint32_t        current_image = renderer.swapchain.current_image;
+
+    GPU_SCOPE(frame_prof, cmd, "ANALYTIC_FOG", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
+    {
+        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.depth[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        rt_transition_all(cmd, &renderer.fogged_hdr[current_image], VK_IMAGE_LAYOUT_GENERAL,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        flush_barriers(cmd);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.analytic_fog]);
+
+        AnalyticFogPush push    = {0};
+        push.src_texture_id     = renderer.hdr_color[current_image].bindless_index;
+        push.depth_texture_id   = renderer.depth[current_image].bindless_index;
+        push.output_image_id    = renderer.fogged_hdr[current_image].bindless_index;
+        push.sampler_id         = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
+        push.width              = renderer.swapchain.extent.width;
+        push.height             = renderer.swapchain.extent.height;
+        push.fog_enabled        = g_postfx_settings.fog_enabled;
+        push.density_scale      = g_postfx_settings.fog_density;
+        push.fog_radius         = g_postfx_settings.fog_radius;
+        push.noise_amount       = g_postfx_settings.fog_noise;
+        push.fog_color[0]       = g_postfx_settings.fog_color[0];
+        push.fog_color[1]       = g_postfx_settings.fog_color[1];
+        push.fog_color[2]       = g_postfx_settings.fog_color[2];
+        push.fog_center[0]      = g_postfx_settings.fog_center[0];
+        push.fog_center[1]      = g_postfx_settings.fog_center[1];
+        push.fog_center[2]      = g_postfx_settings.fog_center[2];
+
+        vkCmdPushConstants(cmd, renderer.bindless_system.pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(AnalyticFogPush), &push);
+
+        uint32_t gx = (renderer.swapchain.extent.width + 15) / 16;
+        uint32_t gy = (renderer.swapchain.extent.height + 15) / 16;
+        vkCmdDispatch(cmd, gx, gy, 1);
     }
 }
 
@@ -241,7 +310,7 @@ void            post_pass()
 
     GPU_SCOPE(frame_prof, cmd, "DOF_PREPARE", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
     {
-        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        rt_transition_all(cmd, &renderer.fogged_hdr[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.depth[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
@@ -253,7 +322,7 @@ void            post_pass()
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.dof_prepare]);
 
         DofPreparePush prep_push  = {0};
-        prep_push.src_texture_id  = renderer.hdr_color[current_image].bindless_index;
+        prep_push.src_texture_id  = renderer.fogged_hdr[current_image].bindless_index;
         prep_push.depth_texture_id = renderer.depth[current_image].bindless_index;
         prep_push.output_image_id = renderer.dof_half[current_image].bindless_index;
         prep_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];
@@ -275,7 +344,7 @@ void            post_pass()
 
     GPU_SCOPE(frame_prof, cmd, "POST", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
     {
-        rt_transition_all(cmd, &renderer.hdr_color[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        rt_transition_all(cmd, &renderer.fogged_hdr[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         rt_transition_all(cmd, &renderer.dof_half[current_image], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
@@ -288,7 +357,7 @@ void            post_pass()
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_render_pipelines.pipelines[pipelines.postprocess]);
 
         PostPush pp_push        = {0};
-        pp_push.src_texture_id   = renderer.hdr_color[current_image].bindless_index;
+        pp_push.src_texture_id   = renderer.fogged_hdr[current_image].bindless_index;
         pp_push.dof_texture_id   = renderer.dof_half[current_image].bindless_index;
         pp_push.output_image_id  = renderer.ldr_color[current_image].bindless_index;
         pp_push.sampler_id      = renderer.default_samplers.samplers[SAMPLER_LINEAR_CLAMP];

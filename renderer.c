@@ -107,6 +107,7 @@ void gfx_pipelines()
                                                                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
             pipelines.toon_outline     = pipeline_create_graphics(&renderer, &cfg);
         }
+        pipelines.analytic_fog = pipeline_create_compute(&renderer, "compiledshaders/analytic_fog.comp.spv");
         pipelines.dof_prepare = pipeline_create_compute(&renderer, "compiledshaders/dof_prepare.comp.spv");
         pipelines.postprocess = pipeline_create_compute(&renderer, "compiledshaders/postprocess.comp.spv");
         pipelines.bloom_downsample = pipeline_create_compute(&renderer, "compiledshaders/bloom_downsample.comp.spv");

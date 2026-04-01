@@ -4,6 +4,7 @@
 #include "input.h"
 #include "helpers.h"
 #include "fs.h"
+#include "audio.h"
 
 #include <dirent.h>
 #include <math.h>
@@ -2324,16 +2325,28 @@ int main(void)
     graphics_init();
     rand_seed((uint64_t)time(NULL));
 
+    AudioConfig audio_cfg = audio_default_config();
+    AudioSystem* audio = audio_create(&audio_cfg);
+    if(!audio)
+    {
+        renderer_destroy(&renderer);
+        return 1;
+    }
+
     Camera cam = {0};
     camera_defaults_3d(&cam);
     camera3d_set_position(&cam, 0.0f, 0.6f, 4.0f);
     camera3d_set_rotation_yaw_pitch(&cam, 0.0f, 0.0f);
+
+    vec3 prev_listener_pos = {0.0f, 0.0f, 0.0f};
+    glm_vec3_copy(cam.position, prev_listener_pos);
 
     char**   glb_paths = NULL;
     uint32_t glb_count = 0;
 
     if(!collect_glb_paths(BLOCKY_DIR, &glb_paths, &glb_count))
     {
+        audio_destroy(audio);
         renderer_destroy(&renderer);
         return 1;
     }
@@ -2359,6 +2372,7 @@ int main(void)
     if(!draw_3d(&player_desc, &player))
     {
         free_glb_paths(glb_paths, glb_count);
+        audio_destroy(audio);
         renderer_destroy(&renderer);
         return 1;
     }
@@ -2376,6 +2390,7 @@ int main(void)
     {
         gltf_gpu_model_destroy(&player.model);
         free_glb_paths(glb_paths, glb_count);
+        audio_destroy(audio);
         renderer_destroy(&renderer);
         return 1;
     }
@@ -2571,6 +2586,38 @@ int main(void)
         camera3d_set_position(&cam, player_pos[0], player_pos[1] + 1.2f, player_pos[2] + 4.5f);
         camera3d_set_rotation_yaw_pitch(&cam, 0.0f, -0.08f);
 
+        vec3 listener_forward = {
+            cosf(cam.pitch) * sinf(cam.yaw),
+            sinf(cam.pitch),
+            -cosf(cam.pitch) * cosf(cam.yaw),
+        };
+        glm_vec3_normalize(listener_forward);
+
+        vec3 listener_vel = {0.0f, 0.0f, 0.0f};
+        if(frame_delta_seconds > 0.0f)
+        {
+            vec3 delta;
+            glm_vec3_sub(cam.position, prev_listener_pos, delta);
+            glm_vec3_scale(delta, 1.0f / frame_delta_seconds, listener_vel);
+        }
+        glm_vec3_copy(cam.position, prev_listener_pos);
+
+        AudioListener listener = {0};
+        listener.position[0] = cam.position[0];
+        listener.position[1] = cam.position[1];
+        listener.position[2] = cam.position[2];
+        listener.velocity[0] = listener_vel[0];
+        listener.velocity[1] = listener_vel[1];
+        listener.velocity[2] = listener_vel[2];
+        listener.at[0] = listener_forward[0];
+        listener.at[1] = listener_forward[1];
+        listener.at[2] = listener_forward[2];
+        listener.up[0] = 0.0f;
+        listener.up[1] = 1.0f;
+        listener.up[2] = 0.0f;
+
+        audio_update(audio, &listener);
+
         pipeline_rebuild(&renderer);
         frame_start(&renderer, &cam);
 
@@ -2702,6 +2749,7 @@ int main(void)
             }
 
             pass_toon_outline();
+            pass_analytic_fog();
             post_pass();
             pass_smaa();
             pass_ldr_to_swapchain();
@@ -2765,6 +2813,10 @@ int main(void)
                 if(igCheckbox("DoF Enabled", &dof_enabled))
                     g_postfx_settings.dof_enabled = dof_enabled ? 1u : 0u;
 
+                bool fog_enabled = g_postfx_settings.fog_enabled != 0;
+                if(igCheckbox("Analytic Fog Enabled", &fog_enabled))
+                    g_postfx_settings.fog_enabled = fog_enabled ? 1u : 0u;
+
                 igSliderFloat("Exposure", &g_postfx_settings.exposure, -4.0f, 4.0f, "%.2f", 0);
                 igSliderFloat("Bloom Intensity", &g_postfx_settings.bloom_intensity, 0.0f, 2.5f, "%.2f", 0);
 
@@ -2773,6 +2825,12 @@ int main(void)
                 igSliderFloat("DoF Far Plane", &g_postfx_settings.dof_far_plane, 10.0f, 2000.0f, "%.1f", 0);
                 igSliderFloat("DoF Max Blur", &g_postfx_settings.dof_max_blur_size, 1.0f, 40.0f, "%.2f", 0);
                 igSliderFloat("DoF Radius Scale", &g_postfx_settings.dof_rad_scale, 0.05f, 2.0f, "%.3f", 0);
+
+                igSliderFloat("Fog Density", &g_postfx_settings.fog_density, 0.0f, 4.0f, "%.2f", 0);
+                igSliderFloat("Fog Radius", &g_postfx_settings.fog_radius, 0.5f, 64.0f, "%.2f", 0);
+                igSliderFloat("Fog Noise", &g_postfx_settings.fog_noise, 0.0f, 0.5f, "%.3f", 0);
+                igSliderFloat3("Fog Color", g_postfx_settings.fog_color, 0.0f, 1.0f, "%.3f", 0);
+                igSliderFloat3("Fog Center", g_postfx_settings.fog_center, -64.0f, 64.0f, "%.2f", 0);
 
                 igEnd();
 
@@ -2852,7 +2910,7 @@ int main(void)
     destroy_obstacles(obstacles, obstacle_count);
     gltf_gpu_model_destroy(&player.model);
     free_glb_paths(glb_paths, glb_count);
-
+    audio_destroy(audio);
     renderer_destroy(&renderer);
     return 0;
 }

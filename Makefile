@@ -9,13 +9,22 @@ CXX := clang++
 # Sources
 # -----------------------------
 
+SOL_SRC_CPP := $(wildcard external/soloud/src/core/*.cpp) \
+               $(wildcard external/soloud/src/filter/*.cpp) \
+               $(wildcard external/soloud/src/audiosource/wav/*.cpp) \
+               external/soloud/src/backend/miniaudio/soloud_miniaudio.cpp
+
+SOL_SRC_C := external/soloud/src/audiosource/wav/stb_vorbis.c
+
 SRC_C := main.c ext.c vk.c helpers.c offset_allocator.c passes.c renderer.c text_baker.c text_system.c gltfloader.c \
          input.c fs.c \
-         $(wildcard external/phyfs/src/*.c)
+         $(wildcard external/phyfs/src/*.c) \
+         $(SOL_SRC_C)
 
 
 
-SRC_CPP := vma.cpp \
+SRC_CPP := audio.cpp \
+           vma.cpp \
            $(wildcard external/meshoptimizer/src/*.cpp) \
            external/cimgui/cimgui.cpp \
            external/cimgui/cimgui_impl.cpp \
@@ -26,7 +35,8 @@ SRC_CPP := vma.cpp \
            external/cimgui/imgui/imgui_widgets.cpp \
            external/cimgui/imgui/backends/imgui_impl_glfw.cpp \
            external/cimgui/imgui/backends/imgui_impl_vulkan.cpp \
-           external/tracy/public/TracyClient.cpp
+           external/tracy/public/TracyClient.cpp \
+           $(SOL_SRC_CPP)
 OBJ := $(addprefix $(BUILD_DIR)/, $(SRC_C:.c=.o) $(SRC_CPP:.cpp=.o))
 
 # -----------------------------
@@ -35,16 +45,18 @@ OBJ := $(addprefix $(BUILD_DIR)/, $(SRC_C:.c=.o) $(SRC_CPP:.cpp=.o))
 
 INCLUDES := -Iexternal/cimgui \
             -Iexternal/cimgui/imgui \
-            -Iexternal/cimgui/imgui/backends
+            -Iexternal/cimgui/imgui/backends \
+            -Iexternal/soloud/include
 
 # -----------------------------
 # Base Flags
 # -----------------------------
 
-BASE_CFLAGS   := -std=gnu99
+BASE_CFLAGS   := -std=gnu99 $(INCLUDES)
 BASE_CXXFLAGS := -std=c++17 -w -fno-common $(INCLUDES) \
                  -DIMGUI_IMPL_VULKAN_NO_PROTOTYPES \
-                 -DIMGUI_IMPL_API='extern "C"'
+                 -DIMGUI_IMPL_API='extern "C"' \
+                 -DWITH_MINIAUDIO
 
 # -----------------------------
 # Debug Flags

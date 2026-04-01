@@ -463,6 +463,7 @@ Frustum frustum;
     // render targets (BIG = cold)
     RenderTarget depth[MAX_SWAPCHAIN_IMAGES];
     RenderTarget hdr_color[MAX_SWAPCHAIN_IMAGES];
+    RenderTarget fogged_hdr[MAX_SWAPCHAIN_IMAGES];
     RenderTarget dof_half[MAX_SWAPCHAIN_IMAGES];
     RenderTarget ldr_color[MAX_SWAPCHAIN_IMAGES];
     RenderTarget bloom_chain[MAX_SWAPCHAIN_IMAGES];
